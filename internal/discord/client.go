@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,13 +35,48 @@ func NewClient(webhookURL string) *Client {
 
 func NewClientWithHTTP(webhookURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: defaultTimeout}
+		httpClient = NewHTTPClient()
 	}
 	return &Client{webhookURL: strings.TrimSpace(webhookURL), httpClient: httpClient}
 }
 
+// NewHTTPClient returns the default HTTP client used for webhook delivery.
+// Callers that build many *Client instances (one per FeedGroup webhook
+// secret) should construct this once and share it via NewClientWithHTTP, so
+// that connections to discord.com are pooled instead of rebuilt per client.
+func NewHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultTimeout}
+}
+
 type discordPayload struct {
 	Content string `json:"content"`
+}
+
+// RateLimitError indicates Discord responded with HTTP 429 and how long the
+// caller must wait before retrying, per the response's Retry-After header.
+type RateLimitError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("discord webhook rate limited, retry after %s", e.RetryAfter)
+}
+
+// parseRetryAfter parses Discord's Retry-After header, which is a number of
+// seconds (optionally fractional). It defaults to 1s if the header is
+// missing or malformed, so callers always back off at least briefly.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Second
+	}
+
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil || seconds < 0 {
+		return time.Second
+	}
+
+	return time.Duration(seconds * float64(time.Second))
 }
 
 func (c *Client) SendMessage(ctx context.Context, content string) error {
@@ -77,6 +113,10 @@ func (c *Client) SendMessage(ctx context.Context, content string) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var responseBody map[string]any
