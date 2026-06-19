@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- rss2discord_v1alpha1_feedgroup.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

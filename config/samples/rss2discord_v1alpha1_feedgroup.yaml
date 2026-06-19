@@ -1,0 +1,9 @@
+apiVersion: rss2discord.rss2discord.maverickd650.dev/v1alpha1
+kind: FeedGroup
+metadata:
+  labels:
+    app.kubernetes.io/name: rss2discord-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: feedgroup-sample
+spec:
+  # TODO(user): Add fields here
