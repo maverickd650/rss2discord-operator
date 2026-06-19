@@ -21,10 +21,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -45,6 +47,11 @@ import (
 
 const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
 
+// maxLastSentPerFeed bounds how many sent-entry hashes are retained per feed
+// in Status.LastSent. Without a cap this map grows by one key per sent
+// message forever, bloating the FeedGroup status subresource indefinitely.
+const maxLastSentPerFeed = 200
+
 // FeedGroupReconciler reconciles a FeedGroup object
 type FeedGroupReconciler struct {
 	client.Client
@@ -62,6 +69,7 @@ type FeedGroupReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx).WithValues("feedgroup", req.NamespacedName)
+	ctx = logf.IntoContext(ctx, log)
 
 	var feedGroup v1alpha1.FeedGroup
 	if err := r.Get(ctx, req.NamespacedName, &feedGroup); err != nil {
@@ -99,88 +107,44 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	discordClient := discordBuilder(webhookURL)
 
-	wantRetry := false
+	activeFeeds := make([]v1alpha1.FeedSpec, 0, len(feedGroup.Spec.Feeds))
 	for _, feed := range feedGroup.Spec.Feeds {
 		if feed.RSSUrl == "" || feed.Paused {
 			continue
 		}
+		activeFeeds = append(activeFeeds, feed)
+	}
 
-		feedGroup.Status.LastChecked[feed.RSSUrl] = now
-		if _, ok := feedGroup.Status.LastSent[feed.RSSUrl]; !ok {
-			feedGroup.Status.LastSent[feed.RSSUrl] = map[string]string{}
+	// Feeds are independent network fetches, so fetch them concurrently
+	// rather than paying each feed's fetch timeout sequentially. Sending and
+	// status-map updates below remain single-threaded, so no locking is
+	// needed for the rest of the reconcile.
+	fetched := make([][]rss.Entry, len(activeFeeds))
+	fetchErrs := make([]error, len(activeFeeds))
+	var wg sync.WaitGroup
+	for i, feed := range activeFeeds {
+		wg.Add(1)
+		go func(i int, rssURL string) {
+			defer wg.Done()
+			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL)
+		}(i, feed.RSSUrl)
+	}
+	wg.Wait()
+
+	wantRetry := false
+	var discordRetryAfter time.Duration
+	for i, feed := range activeFeeds {
+		retry, rateLimitRetryAfter := r.processFeed(ctx, &feedGroup, feed, fetched[i], fetchErrs[i], discordClient, now)
+		if retry {
+			wantRetry = true
 		}
-
-		entries, err := rssClient.FetchEntries(ctx, feed.RSSUrl)
-		if err != nil {
-			log.Error(err, "failed to fetch RSS feed", "url", feed.RSSUrl)
-			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-			feedGroup.Status.RetryCount[feed.RSSUrl]++
-			if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
-				wantRetry = true
-			}
-			continue
+		if rateLimitRetryAfter > discordRetryAfter {
+			discordRetryAfter = rateLimitRetryAfter
 		}
+	}
 
-		if len(entries) == 0 {
-			delete(feedGroup.Status.LastError, feed.RSSUrl)
-			feedGroup.Status.RetryCount[feed.RSSUrl] = 0
-			continue
-		}
-
-		slices.SortStableFunc(entries, func(a, b rss.Entry) int {
-			return a.Published.Compare(b.Published)
-		})
-
-		lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
-		hasSeenID := lastSeenID != ""
-		foundLastSeen := !hasSeenID
-
-		for _, entry := range entries {
-			if hasSeenID && !foundLastSeen {
-				if entry.ID == lastSeenID {
-					foundLastSeen = true
-				}
-				continue
-			}
-
-			entryKey := computeEntryKey(entry)
-			if _, alreadySent := feedGroup.Status.LastSent[feed.RSSUrl][entryKey]; alreadySent {
-				continue
-			}
-
-			matched, err := matchesFilter(feed.Filter, entry)
-			if err != nil {
-				log.Error(err, "invalid filter regex", "url", feed.RSSUrl)
-				feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-				continue
-			}
-			if !matched {
-				continue
-			}
-
-			message, err := renderMessage(&feedGroup, &feed, entry)
-			if err != nil {
-				log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
-				feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-				wantRetry = true
-				continue
-			}
-
-			if err := discordClient.SendMessage(ctx, message); err != nil {
-				log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
-				feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-				feedGroup.Status.RetryCount[feed.RSSUrl]++
-				if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
-					wantRetry = true
-				}
-				continue
-			}
-
-			feedGroup.Status.LastSent[feed.RSSUrl][entryKey] = now
-			feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entry.ID
-			delete(feedGroup.Status.LastError, feed.RSSUrl)
-			feedGroup.Status.RetryCount[feed.RSSUrl] = 0
-		}
+	if discordRetryAfter > 0 {
+		return r.requeueWithStatus(ctx, &feedGroup, "", discordRetryAfter)
 	}
 
 	interval := feedGroup.Spec.Interval
@@ -191,6 +155,116 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return r.requeueWithStatus(ctx, &feedGroup, interval, fallback)
+}
+
+// processFeed fetches/filters/sends entries for a single feed and updates
+// feedGroup's status maps accordingly. It returns whether the reconcile
+// should retry sooner than the normal interval, and, if Discord rate
+// limited the webhook, how long to wait before the next attempt.
+func (r *FeedGroupReconciler) processFeed(
+	ctx context.Context,
+	feedGroup *v1alpha1.FeedGroup,
+	feed v1alpha1.FeedSpec,
+	entries []rss.Entry,
+	fetchErr error,
+	discordClient *discord.Client,
+	now string,
+) (wantRetry bool, rateLimitRetryAfter time.Duration) {
+	log := logf.FromContext(ctx)
+
+	feedGroup.Status.LastChecked[feed.RSSUrl] = now
+	if _, ok := feedGroup.Status.LastSent[feed.RSSUrl]; !ok {
+		feedGroup.Status.LastSent[feed.RSSUrl] = map[string]string{}
+	}
+
+	if fetchErr != nil {
+		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
+		feedGroup.Status.LastError[feed.RSSUrl] = fetchErr.Error()
+		feedGroup.Status.RetryCount[feed.RSSUrl]++
+		return feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries), 0
+	}
+
+	if len(entries) == 0 {
+		delete(feedGroup.Status.LastError, feed.RSSUrl)
+		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		return false, 0
+	}
+
+	filterRegex, err := compileFilterRegex(feed.Filter)
+	if err != nil {
+		log.Error(err, "invalid filter regex", "url", feed.RSSUrl)
+		feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+		return false, 0
+	}
+
+	tmpl, err := compileMessageTemplate(feedGroup, &feed)
+	if err != nil {
+		log.Error(err, "invalid Discord message template", "url", feed.RSSUrl)
+		feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+		return true, 0
+	}
+
+	slices.SortStableFunc(entries, func(a, b rss.Entry) int {
+		return a.Published.Compare(b.Published)
+	})
+
+	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
+	hasSeenID := lastSeenID != ""
+	foundLastSeen := !hasSeenID
+
+	for _, entry := range entries {
+		if hasSeenID && !foundLastSeen {
+			if entry.ID == lastSeenID {
+				foundLastSeen = true
+			}
+			continue
+		}
+
+		entryKey := computeEntryKey(entry)
+		if _, alreadySent := feedGroup.Status.LastSent[feed.RSSUrl][entryKey]; alreadySent {
+			continue
+		}
+
+		if !matchesFilter(feed.Filter, entry, filterRegex) {
+			continue
+		}
+
+		message, err := renderMessage(tmpl, entry)
+		if err != nil {
+			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
+			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+			wantRetry = true
+			continue
+		}
+
+		if err := discordClient.SendMessage(ctx, message); err != nil {
+			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
+			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+
+			var rateLimitErr *discord.RateLimitError
+			if errors.As(err, &rateLimitErr) {
+				wantRetry = true
+				if rateLimitErr.RetryAfter > rateLimitRetryAfter {
+					rateLimitRetryAfter = rateLimitErr.RetryAfter
+				}
+			} else {
+				feedGroup.Status.RetryCount[feed.RSSUrl]++
+				if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
+					wantRetry = true
+				}
+			}
+			continue
+		}
+
+		feedGroup.Status.LastSent[feed.RSSUrl][entryKey] = now
+		feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entry.ID
+		delete(feedGroup.Status.LastError, feed.RSSUrl)
+		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+	}
+
+	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
+
+	return wantRetry, rateLimitRetryAfter
 }
 
 func (r *FeedGroupReconciler) resolveWebhookURL(ctx context.Context, feedGroup *v1alpha1.FeedGroup) (string, error) {
@@ -274,41 +348,50 @@ func computeEntryKey(entry rss.Entry) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func matchesFilter(filter *v1alpha1.Filter, entry rss.Entry) (bool, error) {
-	if filter == nil {
-		return true, nil
+// compileFilterRegex compiles a feed's filter regex once per feed per
+// reconcile, instead of recompiling it for every entry in the feed.
+func compileFilterRegex(filter *v1alpha1.Filter) (*regexp.Regexp, error) {
+	if filter == nil || strings.TrimSpace(filter.Regex) == "" {
+		return nil, nil
 	}
 
-	content := strings.ToLower(strings.TrimSpace(entry.Title + "\n" + entry.Description))
+	re, err := regexp.Compile(filter.Regex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter regex %q: %w", filter.Regex, err)
+	}
+	return re, nil
+}
 
-	if strings.TrimSpace(filter.Regex) != "" {
-		matched, err := regexp.MatchString(filter.Regex, entry.Title+"\n"+entry.Description)
-		if err != nil {
-			return false, fmt.Errorf("invalid filter regex %q: %w", filter.Regex, err)
-		}
-		if !matched {
-			return false, nil
-		}
+func matchesFilter(filter *v1alpha1.Filter, entry rss.Entry, filterRegex *regexp.Regexp) bool {
+	if filter == nil {
+		return true
+	}
+
+	if filterRegex != nil && !filterRegex.MatchString(entry.Title+"\n"+entry.Description) {
+		return false
 	}
 
 	if len(filter.Keywords) == 0 {
-		return true, nil
+		return true
 	}
 
+	content := strings.ToLower(strings.TrimSpace(entry.Title + "\n" + entry.Description))
 	for _, keyword := range filter.Keywords {
 		keyword = strings.TrimSpace(keyword)
 		if keyword == "" {
 			continue
 		}
 		if strings.Contains(content, strings.ToLower(keyword)) {
-			return true, nil
+			return true
 		}
 	}
 
-	return false, nil
+	return false
 }
 
-func renderMessage(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSpec, entry rss.Entry) (string, error) {
+// compileMessageTemplate parses a feed's Discord message template once per
+// feed per reconcile, instead of reparsing it for every entry sent.
+func compileMessageTemplate(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSpec) (*template.Template, error) {
 	tmplText := strings.TrimSpace(feed.Format)
 	if tmplText == "" {
 		tmplText = strings.TrimSpace(feedGroup.Spec.Format)
@@ -317,11 +400,10 @@ func renderMessage(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSpec, entry
 		tmplText = defaultMessageFormat
 	}
 
-	tmpl, err := template.New("discordMessage").Parse(tmplText)
-	if err != nil {
-		return "", err
-	}
+	return template.New("discordMessage").Parse(tmplText)
+}
 
+func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
 	data := struct {
 		Title       string
 		Description string
@@ -340,6 +422,27 @@ func renderMessage(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSpec, entry
 	}
 
 	return buf.String(), nil
+}
+
+// pruneLastSent caps a feed's sent-entry dedup map at max entries, dropping
+// the oldest (by recorded RFC3339 send timestamp, which sorts lexically)
+// first. Without this, LastSent grows by one key per sent message forever.
+func pruneLastSent(sent map[string]string, max int) {
+	if len(sent) <= max {
+		return
+	}
+
+	keys := make([]string, 0, len(sent))
+	for key := range sent {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b string) int {
+		return strings.Compare(sent[a], sent[b])
+	})
+
+	for _, key := range keys[:len(keys)-max] {
+		delete(sent, key)
+	}
 }
 
 func parseDurationWithDefault(value string, fallback time.Duration) (time.Duration, error) {

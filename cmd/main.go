@@ -37,6 +37,8 @@ import (
 
 	rss2discordv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/controller"
+	"github.com/maverickd650/rss2discord-operator/internal/discord"
+	"github.com/maverickd650/rss2discord-operator/internal/rss"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -178,9 +180,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// RSSClient and the Discord HTTP client are constructed once here and
+	// reused across every reconcile, rather than per-reconcile, so that
+	// keep-alive connections to feed/webhook hosts are actually pooled
+	// instead of being torn down and rebuilt on every reconciliation.
+	rssClient := rss.NewClient(nil)
+	discordHTTPClient := discord.NewHTTPClient()
+
 	if err := (&controller.FeedGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		RSSClient: rssClient,
+		DiscordClientBuilder: func(webhookURL string) *discord.Client {
+			return discord.NewClientWithHTTP(webhookURL, discordHTTPClient)
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "feedgroup")
 		os.Exit(1)
