@@ -1,29 +1,22 @@
 # rss2discord-operator
 
-A Kubernetes operator that automatically posts RSS feed updates to Discord channels via webhooks. Manage your RSS feeds declaratively with Kubernetes CRDs!
+A Kubernetes operator that watches RSS feeds and posts new entries to Discord via webhooks. Feeds are configured declaratively with a `FeedGroup` custom resource.
+
+> **Note:** This project is vibecoded — built quickly with heavy AI assistance, not deeply hardened or extensively reviewed. It works for personal/small-scale use, but read the code before trusting it with anything important.
 
 ## Features
 
-- 📰 **RSS Feed Management**: Define RSS feeds via Kubernetes CRDs
-- 🔗 **Discord Integration**: Send feed updates directly to Discord webhooks
-- 🎯 **Flexible Filtering**: Filter feed entries by regex patterns or keywords
-- 🎨 **Custom Formatting**: Customize Discord message templates
-- ⏱️ **Configurable Intervals**: Control how often feeds are checked
-- 🔄 **Automatic Retries**: Built-in retry logic for failed operations
-- 📊 **Kubernetes Native**: Uses RBAC, status conditions, and Kubernetes logging
-- 🐳 **Multi-Architecture**: Supports Linux ARM64, AMD64, s390x, and ppc64le
+- Define RSS feeds as Kubernetes CRDs
+- Post updates to Discord webhooks
+- Filter entries by regex or keywords
+- Customize the message format per feed group or per feed
+- Configurable check interval and retry behavior
 
-## Quick Start
+## Installing
 
-### Prerequisites
+Requires a Kubernetes 1.26+ cluster and a Discord webhook URL.
 
-- Kubernetes 1.26+ cluster
-- Helm 3.0+ (for Helm-based installation)
-- A Discord webhook URL (from a channel's webhooks settings)
-
-### Installation Options
-
-#### Option 1: Helm Chart (Recommended)
+### Helm
 
 ```bash
 helm install rss2discord-operator ./dist/chart \
@@ -31,35 +24,23 @@ helm install rss2discord-operator ./dist/chart \
   --create-namespace
 ```
 
-Or upgrade an existing release:
-
-```bash
-helm upgrade rss2discord-operator ./dist/chart \
-  --namespace rss2discord-operator-system \
-  --create-namespace
-```
-
-#### Option 2: kubectl (YAML Bundle)
+### kubectl
 
 ```bash
 kubectl apply -f dist/install.yaml
 ```
 
-This creates the `rss2discord-operator-system` namespace and deploys the operator.
-
-#### Option 3: Make Targets
+### Make
 
 ```bash
-# Using Helm
-IMG=my-registry/rss2discord-operator:v0.1.0 make helm-deploy
-
-# Using kubectl
 IMG=my-registry/rss2discord-operator:v0.1.0 make deploy
+# or
+IMG=my-registry/rss2discord-operator:v0.1.0 make helm-deploy
 ```
 
-### Create a FeedGroup
+## Usage
 
-1. **Create a Discord webhook secret** in your namespace:
+1. Create a secret with your Discord webhook URL:
 
 ```bash
 kubectl create secret generic discord-webhook \
@@ -67,7 +48,7 @@ kubectl create secret generic discord-webhook \
   --from-literal=url='https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN'
 ```
 
-2. **Create a FeedGroup CRD**:
+2. Create a `FeedGroup`:
 
 ```yaml
 apiVersion: rss2discord.maverickd650.dev/v1alpha1
@@ -96,98 +77,77 @@ spec:
       paused: false
 ```
 
-3. **Apply the resource**:
-
 ```bash
 kubectl apply -f feedgroup.yaml
 ```
 
-4. **Monitor the operator**:
+3. Watch it work:
 
 ```bash
 kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-controller-manager -f
 ```
 
-## Configuration
+## Configuration reference
 
-### FeedGroup Spec
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `discordWebhookSecretRef` | `SecretKeySelector` | Required | Reference to Secret containing Discord webhook URL |
-| `interval` | `string` | `"30m"` | Duration between feed checks (e.g., "30m", "1h") |
-| `retries` | `int` | `3` | Number of retries for failed operations |
-| `retryInterval` | `string` | `"5m"` | Duration between retry attempts |
-| `format` | `string` | See below | Template for Discord messages |
-| `feeds` | `[]Feed` | Required | List of RSS feeds to monitor |
-
-### Feed Configuration
+### FeedGroup spec
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `rssUrl` | `string` | Required | URL of the RSS feed |
-| `filter` | `*Filter` | Optional | Filter rules for feed entries |
-| `format` | `string` | Optional | Override group-level message format for this feed |
-| `paused` | `bool` | `false` | Temporarily stop processing this feed |
+| `discordWebhookSecretRef` | `SecretKeySelector` | required | Secret containing the Discord webhook URL |
+| `interval` | `string` | `30m` | How often to check feeds |
+| `retries` | `int` | `3` | Retries for failed operations |
+| `retryInterval` | `string` | `5m` | Delay between retries |
+| `format` | `string` | see below | Discord message template |
+| `feeds` | `[]Feed` | required | RSS feeds to monitor |
 
-### Filter Configuration
+### Feed
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `rssUrl` | `string` | required | RSS feed URL |
+| `filter` | `*Filter` | optional | Filter rules for entries |
+| `format` | `string` | optional | Overrides the group's format for this feed |
+| `paused` | `bool` | `false` | Stop processing this feed without removing it |
+
+### Filter
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `regex` | `string` | Regular expression to match against title/description |
-| `keywords` | `[]string` | List of keywords to match (OR logic) |
+| `regex` | `string` | Regex matched against title/description |
+| `keywords` | `[]string` | Keywords matched against title/description (OR) |
 
-### Message Template
+### Message template
 
-Default template:
+Default:
+
 ```
 **{{.Title}}**
 {{.Description}}
 [Read more]({{.Link}})
 ```
 
-Available placeholders:
-- `{{.Title}}` - Entry title
-- `{{.Description}}` - Entry description
-- `{{.Link}}` - Entry URL
-- `{{.Published}}` - Publication timestamp
+Available fields: `.Title`, `.Description`, `.Link`, `.Published`.
 
 ## Development
 
-### Prerequisites
-
-- Go 1.23+
-- Make
-- Docker (for building container images)
-- Kind (optional, for local testing)
-
-### Build & Test
+Requires Go 1.23+, Make, and Docker.
 
 ```bash
-# Build the manager binary
-make build
-
-# Run tests
-make test
-
-# Run linter
-make lint
-make lint-fix
-
-# Run e2e tests (requires Kind cluster)
-make test-e2e
+make build       # build the manager binary
+make test        # unit tests
+make lint        # lint
+make lint-fix    # lint with autofix
+make test-e2e    # e2e tests, needs a Kind cluster
 ```
 
-### Generate Manifests
-
-After modifying CRD types or RBAC markers:
+After changing CRD types or RBAC markers:
 
 ```bash
-make manifests   # Generate CRDs and RBAC
-make generate    # Generate DeepCopy methods
+make manifests   # regenerate CRDs and RBAC
+make generate    # regenerate DeepCopy methods
 ```
 
-### Build & Push Container Image
+Build and push an image:
 
 ```bash
 export IMG=my-registry/rss2discord-operator:v0.1.0
@@ -195,52 +155,22 @@ make docker-build
 make docker-push
 ```
 
-### Deploy Locally
-
-```bash
-# Using Kustomize
-IMG=my-registry/rss2discord-operator:v0.1.0 make deploy
-
-# Using Helm
-IMG=my-registry/rss2discord-operator:v0.1.0 make helm-deploy
-```
-
-## Project Structure
+## Project layout
 
 ```
-.
-├── api/v1alpha1/               # FeedGroup CRD types
-│   ├── feedgroup_types.go
-│   └── groupversion_info.go
-├── internal/
-│   ├── controller/             # Reconciliation logic
-│   │   └── feedgroup_controller.go
-│   ├── discord/                # Discord webhook client
-│   │   └── client.go
-│   └── rss/                    # RSS feed client
-│       └── client.go
-├── config/                     # Kubernetes manifests
-│   ├── crd/                    # CRD definitions
-│   ├── rbac/                   # RBAC rules
-│   ├── manager/                # Deployment config
-│   ├── default/                # Kustomize overlays
-│   └── samples/                # Example CRs
-├── dist/                       # Generated output
-│   ├── install.yaml            # All-in-one YAML bundle
-│   └── chart/                  # Helm chart
-├── test/e2e/                   # End-to-end tests
-├── cmd/main.go                 # Entry point
-├── Dockerfile                  # Container image
-└── Makefile                    # Build targets
+api/v1alpha1/          FeedGroup CRD types
+internal/controller/   Reconciliation logic
+internal/discord/      Discord webhook client
+internal/rss/          RSS feed client
+config/                Kubernetes manifests (CRDs, RBAC, kustomize)
+dist/                  Generated install.yaml and Helm chart
+test/e2e/              End-to-end tests
+cmd/main.go            Entry point
 ```
 
-## Helm Chart
+## Helm chart
 
-The Helm chart is located in `dist/chart/` and provides a production-ready way to deploy the operator.
-
-### Helm Chart Values
-
-Key customizable values in `dist/chart/values.yaml`:
+Located in `dist/chart/`. Key values in `dist/chart/values.yaml`:
 
 ```yaml
 manager:
@@ -256,61 +186,35 @@ manager:
       memory: 64Mi
 ```
 
-### Helm Commands
+Common commands:
 
 ```bash
-# Deploy with custom values
-helm install rss2discord-operator ./dist/chart \
-  --namespace rss2discord-operator-system \
-  --create-namespace \
-  --set manager.image.tag=v0.1.0 \
-  --set manager.replicaCount=2
-
-# Check status
 helm status rss2discord-operator -n rss2discord-operator-system
-
-# View release history
 helm history rss2discord-operator -n rss2discord-operator-system
-
-# Rollback to previous version
 helm rollback rss2discord-operator -n rss2discord-operator-system
-
-# Uninstall
 helm uninstall rss2discord-operator -n rss2discord-operator-system
 ```
 
-For more options, see `dist/chart/values.yaml`.
-
 ## Troubleshooting
 
-### Check operator logs
+Check logs:
 
 ```bash
 kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-controller-manager -f
 ```
 
-### Check FeedGroup status
+Check FeedGroup status:
 
 ```bash
 kubectl describe feedgroup my-feedgroup -n default
-```
-
-View detailed status conditions:
-
-```bash
 kubectl get feedgroup my-feedgroup -n default -o yaml
 ```
 
-### Common Issues
+Common issues:
 
-**Issue**: FeedGroup shows `LastError: webhook - discord webhook URL is empty`
-- **Solution**: Verify the Discord webhook secret exists and the key is correct in `discordWebhookSecretRef`
-
-**Issue**: FeedGroup not updating
-- **Solution**: Check the `interval` setting and operator logs for errors
-
-**Issue**: Messages not formatting correctly
-- **Solution**: Ensure template placeholders match available fields (`.Title`, `.Description`, `.Link`, `.Published`)
+- `LastError: webhook - discord webhook URL is empty` — the secret or key in `discordWebhookSecretRef` is wrong.
+- FeedGroup not updating — check `interval` and the operator logs.
+- Messages formatted wrong — check template placeholders against `.Title`, `.Description`, `.Link`, `.Published`.
 
 ## References
 
@@ -320,8 +224,4 @@ kubectl get feedgroup my-feedgroup -n default -o yaml
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests.
+Apache License, Version 2.0. See [LICENSE](LICENSE).
