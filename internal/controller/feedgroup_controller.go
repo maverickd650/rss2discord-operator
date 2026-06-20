@@ -26,6 +26,7 @@ import (
 	"html"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -209,11 +210,27 @@ func (r *FeedGroupReconciler) processFeed(
 		return false, 0
 	}
 
-	tmpl, err := compileMessageTemplate(feedGroup, &feed)
+	embedSpec := resolveEmbedSpec(feedGroup, &feed)
+
+	var contentTmpl, descriptionTmpl, threadNameTmpl *template.Template
+	if embedSpec != nil && embedSpec.Enabled {
+		descriptionTmpl, err = compileTemplate("discordEmbedDescription", embedSpec.DescriptionFormat, defaultDescriptionFormat)
+	} else {
+		contentTmpl, err = compileMessageTemplate(feedGroup, &feed)
+	}
 	if err != nil {
 		log.Error(err, "invalid Discord message template", "url", feed.RSSUrl)
 		feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
 		return true, 0
+	}
+
+	if strings.TrimSpace(feed.ForumThreadName) != "" {
+		threadNameTmpl, err = compileTemplate("discordThreadName", feed.ForumThreadName, "")
+		if err != nil {
+			log.Error(err, "invalid Discord forum thread name template", "url", feed.RSSUrl)
+			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+			return true, 0
+		}
 	}
 
 	slices.SortStableFunc(entries, func(a, b rss.Entry) int {
@@ -245,7 +262,7 @@ func (r *FeedGroupReconciler) processFeed(
 			continue
 		}
 
-		message, err := renderMessage(tmpl, entry)
+		discordMessage, err := buildDiscordMessage(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, &feed, entry)
 		if err != nil {
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
 			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
@@ -253,7 +270,7 @@ func (r *FeedGroupReconciler) processFeed(
 			continue
 		}
 
-		if err := discordClient.SendMessage(ctx, message); err != nil {
+		if err := discordClient.SendMessage(ctx, discordMessage); err != nil {
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
 			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
 
@@ -416,7 +433,42 @@ func compileMessageTemplate(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSp
 		tmplText = defaultMessageFormat
 	}
 
-	return template.New("discordMessage").Parse(tmplText)
+	return compileTemplate("discordMessage", tmplText, defaultMessageFormat)
+}
+
+// compileTemplate parses text as a Discord message template, falling back
+// to fallback when text is blank.
+func compileTemplate(name, text, fallback string) (*template.Template, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = fallback
+	}
+	return template.New(name).Parse(text)
+}
+
+// resolveEmbedSpec returns the feed's embed config if it set one, otherwise
+// falling back to the FeedGroup's. Returns nil if neither configured one,
+// meaning the feed sends plain-text content.
+func resolveEmbedSpec(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSpec) *v1alpha1.EmbedSpec {
+	if feed.Embed != nil {
+		return feed.Embed
+	}
+	return feedGroup.Spec.Embed
+}
+
+// parseHexColor parses a "#RRGGBB" or "RRGGBB" string into Discord's 24-bit
+// embed color integer, defaulting to 0 (black/unset) for blank or malformed
+// input rather than failing the whole message.
+func parseHexColor(s string) int {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "#")
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.ParseInt(s, 16, 32)
+	if err != nil {
+		return 0
+	}
+	return int(v)
 }
 
 // htmlBlockTagRegex matches HTML tags that delimit block-level content (or
@@ -448,7 +500,19 @@ func stripHTML(input string) string {
 	return strings.TrimSpace(text)
 }
 
-func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
+// defaultDescriptionFormat is used for an embed's description when neither
+// the feed nor the group set EmbedSpec.DescriptionFormat.
+const defaultDescriptionFormat = "{{.Description}}"
+
+// Discord's embed and forum API limits; messages exceeding these are
+// rejected outright rather than truncated server-side.
+const (
+	maxEmbedTitleLength       = 256
+	maxEmbedDescriptionLength = 4096
+	maxForumThreadNameLength  = 100
+)
+
+func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, error) {
 	data := struct {
 		Title       string
 		Description string
@@ -466,7 +530,60 @@ func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
 		return "", err
 	}
 
-	return truncateMessage(buf.String(), maxDiscordMessageLength), nil
+	return truncateMessage(buf.String(), max), nil
+}
+
+// buildDiscordMessage renders entry into the message that should actually
+// be sent: an embed (colored bubble with title/description/thumbnail) when
+// embedSpec is enabled, or plain text content otherwise. It also resolves
+// forum-channel thread targeting (ForumThreadID takes precedence over a
+// rendered ForumThreadName) and group-level webhook branding.
+func buildDiscordMessage(
+	feedGroup *v1alpha1.FeedGroup,
+	embedSpec *v1alpha1.EmbedSpec,
+	contentTmpl, descriptionTmpl, threadNameTmpl *template.Template,
+	feed *v1alpha1.FeedSpec,
+	entry rss.Entry,
+) (discord.Message, error) {
+	msg := discord.Message{
+		Username:  feedGroup.Spec.Username,
+		AvatarURL: feedGroup.Spec.AvatarURL,
+	}
+
+	if embedSpec != nil && embedSpec.Enabled {
+		description, err := renderTemplate(descriptionTmpl, entry, maxEmbedDescriptionLength)
+		if err != nil {
+			return discord.Message{}, err
+		}
+		msg.Embed = &discord.Embed{
+			Title:        truncateMessage(entry.Title, maxEmbedTitleLength),
+			Description:  description,
+			URL:          entry.Link,
+			Color:        parseHexColor(embedSpec.Color),
+			Timestamp:    entry.Published.UTC().Format(time.RFC3339),
+			ThumbnailURL: entry.Image,
+			AuthorName:   embedSpec.AuthorName,
+			FooterText:   embedSpec.FooterText,
+		}
+	} else {
+		content, err := renderTemplate(contentTmpl, entry, maxDiscordMessageLength)
+		if err != nil {
+			return discord.Message{}, err
+		}
+		msg.Content = content
+	}
+
+	if strings.TrimSpace(feed.ForumThreadID) != "" {
+		msg.ThreadID = feed.ForumThreadID
+	} else if threadNameTmpl != nil {
+		threadName, err := renderTemplate(threadNameTmpl, entry, maxForumThreadNameLength)
+		if err != nil {
+			return discord.Message{}, err
+		}
+		msg.ThreadName = threadName
+	}
+
+	return msg, nil
 }
 
 // truncateMessage trims content to at most max characters (by rune), since

@@ -473,6 +473,90 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(discordServer.Bodies()[0]).To(ContainSubstring("First paragraph."))
 			Expect(discordServer.Bodies()[0]).To(ContainSubstring("One"))
 		})
+
+		It("should render an embed with color, thumbnail, and forum thread name when configured", func() {
+			const feedGroupName = "test-feedgroup-embed"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server with an enclosure image")
+			rssServer := NewMockRSSServer(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>Test Feed</description>
+    <item>
+      <title>Embed Article</title>
+      <description>Embed body text</description>
+      <link>https://example.com/embed-article</link>
+      <guid>embed-article</guid>
+      <enclosure url="https://example.com/pic.jpg" type="image/jpeg" />
+    </item>
+  </channel>
+</rss>`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-embed",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource with embed and forum thread config")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-embed"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Embed: &rss2discordv1alpha1.EmbedSpec{
+						Enabled: true,
+						Color:   "#00FF00",
+					},
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL(), ForumThreadName: "{{.Title}}"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the sent message is an embed with the configured color, thumbnail, and thread name")
+			Expect(discordServer.Bodies()).To(HaveLen(1))
+			body := discordServer.Bodies()[0]
+			Expect(body).To(ContainSubstring(`"title":"Embed Article"`))
+			Expect(body).To(ContainSubstring(`"color":65280`))
+			Expect(body).To(ContainSubstring(`"thumbnail":{"url":"https://example.com/pic.jpg"}`))
+			Expect(body).To(ContainSubstring(`"thread_name":"Embed Article"`))
+		})
 	})
 
 	Describe("Error handling", func() {
