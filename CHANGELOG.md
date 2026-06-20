@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.2.2...v0.3.0) (2026-06-20)
+
+
+### Features
+
+* add per-outcome metrics and persistent-failure Events for feed processing ([#15](https://github.com/maverickd650/rss2discord-operator/issues/15)) ([dfbc96b](https://github.com/maverickd650/rss2discord-operator/commit/dfbc96b66fc143bfe125d148c8d001be4b1b59c3))
+* skip re-fetching unchanged RSS feeds via conditional GET ([#13](https://github.com/maverickd650/rss2discord-operator/issues/13)) ([15bc767](https://github.com/maverickd650/rss2discord-operator/commit/15bc767398d28ce71ceb6731aaff58d8fbf155a7))
+* support Discord embeds, forum channels, and webhook branding ([#12](https://github.com/maverickd650/rss2discord-operator/issues/12)) ([7f0438d](https://github.com/maverickd650/rss2discord-operator/commit/7f0438d1ed16f7afcbf0b50595afa5a409d1c499))
+
+
+### Bug Fixes
+
+* bound feed fan-out, tighten SSRF guard, sanitize embed URLs, stop infinite render retries ([#20](https://github.com/maverickd650/rss2discord-operator/issues/20)) ([0ebbd5b](https://github.com/maverickd650/rss2discord-operator/commit/0ebbd5b23275df06051f26f6566c62baa13dd809))
+* cap initial backlog catch-up and strip HTML from Discord messages ([#10](https://github.com/maverickd650/rss2discord-operator/issues/10)) ([17bb2f5](https://github.com/maverickd650/rss2discord-operator/commit/17bb2f529a6e49c83ee49594b7a7d022904b783f))
+* **chart:** restore Interval/RetryInterval validation in Helm CRD ([#22](https://github.com/maverickd650/rss2discord-operator/issues/22)) ([92934c1](https://github.com/maverickd650/rss2discord-operator/commit/92934c1e836f23c31806f6440aeffec52e67dcfa))
+* prevent dropped entries from conditional GETs and prune stale feed status ([#14](https://github.com/maverickd650/rss2discord-operator/issues/14)) ([8e06824](https://github.com/maverickd650/rss2discord-operator/commit/8e06824cf03cf77e7f32265fd82192cd3fe76145))
+* remove unused admission webhook scaffold from manager ([#16](https://github.com/maverickd650/rss2discord-operator/issues/16)) ([6c2317e](https://github.com/maverickd650/rss2discord-operator/commit/6c2317e7be39f034c63a329d96489bcec60bc8c0))
+* skip no-op status writes and reject malformed Interval/RetryInterval at apply time ([#17](https://github.com/maverickd650/rss2discord-operator/issues/17)) ([4e06d44](https://github.com/maverickd650/rss2discord-operator/commit/4e06d44aedd11a283c640d6a8bd847a4ac4a6865))
+
 ## [0.2.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.2.1...v0.2.2) (2026-06-20)
 
 
