@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"slices"
 	"strings"
@@ -51,6 +52,17 @@ const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.L
 // in Status.LastSent. Without a cap this map grows by one key per sent
 // message forever, bloating the FeedGroup status subresource indefinitely.
 const maxLastSentPerFeed = 200
+
+// defaultCatchUpLimit is used when FeedGroupSpec.CatchUpLimit is unset
+// (zero), which happens both for an explicit 0 and for CRDs applied before
+// the field existed (the kubebuilder default only takes effect through the
+// API server's defaulting webhook/CRD schema).
+const defaultCatchUpLimit = 5
+
+// maxDiscordMessageLength is Discord's hard cap on webhook message content;
+// the API rejects anything longer. Full article bodies in a feed's
+// description can easily exceed this once stripped to plain text.
+const maxDiscordMessageLength = 2000
 
 // FeedGroupReconciler reconciles a FeedGroup object
 type FeedGroupReconciler struct {
@@ -211,6 +223,10 @@ func (r *FeedGroupReconciler) processFeed(
 	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
 	hasSeenID := lastSeenID != ""
 	foundLastSeen := !hasSeenID
+
+	if !hasSeenID {
+		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
+	}
 
 	for _, entry := range entries {
 		if hasSeenID && !foundLastSeen {
@@ -403,6 +419,35 @@ func compileMessageTemplate(feedGroup *v1alpha1.FeedGroup, feed *v1alpha1.FeedSp
 	return template.New("discordMessage").Parse(tmplText)
 }
 
+// htmlBlockTagRegex matches HTML tags that delimit block-level content (or
+// line breaks), which are converted to newlines so stripped text retains
+// paragraph/list structure instead of running together.
+var htmlBlockTagRegex = regexp.MustCompile(`(?i)</?\s*(p|li|br|div|h[1-6])\b[^>]*>`)
+
+// htmlTagRegex matches any remaining HTML tag, stripped entirely.
+var htmlTagRegex = regexp.MustCompile(`<[^>]+>`)
+
+// blankLineRegex collapses runs of 3+ newlines (left behind once tags are
+// stripped) down to a single blank line.
+var blankLineRegex = regexp.MustCompile(`\n{3,}`)
+
+// stripHTML converts an RSS/Atom entry's description into Discord-friendly
+// plain text. Many feeds (e.g. the Guardian's) ship descriptions as raw
+// HTML, which Discord otherwise renders as literal tag soup.
+func stripHTML(input string) string {
+	text := htmlBlockTagRegex.ReplaceAllString(input, "\n")
+	text = htmlTagRegex.ReplaceAllString(text, "")
+	text = html.UnescapeString(text)
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	text = blankLineRegex.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+
+	return strings.TrimSpace(text)
+}
+
 func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
 	data := struct {
 		Title       string
@@ -411,7 +456,7 @@ func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
 		Published   string
 	}{
 		Title:       entry.Title,
-		Description: entry.Description,
+		Description: stripHTML(entry.Description),
 		Link:        entry.Link,
 		Published:   entry.Published.UTC().Format(time.RFC3339),
 	}
@@ -421,7 +466,20 @@ func renderMessage(tmpl *template.Template, entry rss.Entry) (string, error) {
 		return "", err
 	}
 
-	return buf.String(), nil
+	return truncateMessage(buf.String(), maxDiscordMessageLength), nil
+}
+
+// truncateMessage trims content to at most max characters (by rune), since
+// Discord rejects webhook messages over its content length limit outright
+// rather than truncating them itself.
+func truncateMessage(content string, max int) string {
+	runes := []rune(content)
+	if len(runes) <= max {
+		return content
+	}
+
+	const ellipsis = "…"
+	return string(runes[:max-len([]rune(ellipsis))]) + ellipsis
 }
 
 // pruneLastSent caps a feed's sent-entry dedup map at max entries, dropping
@@ -443,6 +501,20 @@ func pruneLastSent(sent map[string]string, max int) {
 	for _, key := range keys[:len(keys)-max] {
 		delete(sent, key)
 	}
+}
+
+// limitCatchUp trims entries to at most limit, keeping the most recent ones
+// (entries is assumed sorted ascending by Published). A non-positive limit
+// falls back to defaultCatchUpLimit rather than disabling the cap, so a feed
+// can never dump its entire backlog on first reconcile.
+func limitCatchUp(entries []rss.Entry, limit int) []rss.Entry {
+	if limit <= 0 {
+		limit = defaultCatchUpLimit
+	}
+	if len(entries) <= limit {
+		return entries
+	}
+	return entries[len(entries)-limit:]
 }
 
 func parseDurationWithDefault(value string, fallback time.Duration) (time.Duration, error) {

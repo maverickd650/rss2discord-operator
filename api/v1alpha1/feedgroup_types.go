@@ -83,6 +83,15 @@ type FeedGroupSpec struct {
 
 	// Feeds is the list of RSS feed configurations in this group.
 	Feeds []FeedSpec `json:"feeds"`
+
+	// CatchUpLimit caps how many backlog entries are sent to Discord the
+	// first time a feed is reconciled (i.e. before it has a recorded
+	// LastSeenEntry). Without this, adding a feed with a long history
+	// floods the webhook with every existing entry at once. Entries beyond
+	// the limit are treated as already seen and are not sent.
+	// +kubebuilder:default=5
+	// +optional
+	CatchUpLimit int `json:"catchUpLimit,omitempty"`
 }
 
 // FeedGroupStatus defines the observed state of a FeedGroup.

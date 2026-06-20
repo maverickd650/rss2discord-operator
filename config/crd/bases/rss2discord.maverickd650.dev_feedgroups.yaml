@@ -46,6 +46,15 @@ spec:
           spec:
             description: FeedGroupSpec defines the desired state of a FeedGroup.
             properties:
+              catchUpLimit:
+                default: 5
+                description: |-
+                  CatchUpLimit caps how many backlog entries are sent to Discord the
+                  first time a feed is reconciled (i.e. before it has a recorded
+                  LastSeenEntry). Without this, adding a feed with a long history
+                  floods the webhook with every existing entry at once. Entries beyond
+                  the limit are treated as already seen and are not sent.
+                type: integer
               discordWebhookSecretRef:
                 description: |-
                   DiscordWebhookSecretRef points to the Secret containing the Discord webhook URL.
