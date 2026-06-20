@@ -108,8 +108,10 @@ type FeedGroupSpec struct {
 	// The secret must contain the webhook URL under the specified key.
 	DiscordWebhookSecretRef corev1.SecretKeySelector `json:"discordWebhookSecretRef"`
 
-	// Interval is the duration between feed checks (e.g., "30m", "1h").
+	// Interval is the duration between feed checks (e.g., "30m", "1h"),
+	// parsed by Go's time.ParseDuration.
 	// +kubebuilder:default="30m"
+	// +kubebuilder:validation:Pattern=`^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Interval string `json:"interval,omitempty"`
 
@@ -139,8 +141,10 @@ type FeedGroupSpec struct {
 	// +optional
 	Retries int `json:"retries,omitempty"`
 
-	// RetryInterval is the duration between retries (e.g., "5m").
+	// RetryInterval is the duration between retries (e.g., "5m"), parsed by
+	// Go's time.ParseDuration.
 	// +kubebuilder:default="5m"
+	// +kubebuilder:validation:Pattern=`^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	RetryInterval string `json:"retryInterval,omitempty"`
 

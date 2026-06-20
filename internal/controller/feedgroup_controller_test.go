@@ -442,6 +442,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(afterFirst.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
 			lastSeenAfterFirst := afterFirst.Status.LastSeenEntry[rssServer.URL()]
 			Expect(lastSeenAfterFirst).NotTo(BeEmpty())
+			resourceVersionAfterFirst := afterFirst.ResourceVersion
 
 			By("Running a second reconciliation against the unchanged feed")
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
@@ -461,6 +462,9 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).To(Equal(lastSeenAfterFirst))
 			Expect(afterSecond.Status.LastError).To(BeEmpty())
 			Expect(afterSecond.Status.RetryCount[rssServer.URL()]).To(Equal(0))
+
+			By("Verifying the unchanged-status reconcile skipped the status write entirely")
+			Expect(afterSecond.ResourceVersion).To(Equal(resourceVersionAfterFirst))
 		})
 	})
 
@@ -1432,6 +1436,70 @@ var _ = Describe("FeedGroup Controller", func() {
 			// Should use normal interval (1 hour)
 			expectedInterval := time.Hour
 			Expect(result.RequeueAfter).To(Equal(expectedInterval))
+		})
+	})
+
+	Describe("Spec validation", func() {
+		It("should reject an Interval that isn't a valid Go duration at apply time", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-bad-interval",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-feedgroup-bad-interval",
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-bad-interval"},
+						Key:                  secretURLKey,
+					},
+					Interval: "30 minutes",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: "https://example.com/feed.xml"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.interval")))
+		})
+
+		It("should reject a RetryInterval that isn't a valid Go duration at apply time", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-bad-retry-interval",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-feedgroup-bad-retry-interval",
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-bad-retry-interval"},
+						Key:                  secretURLKey,
+					},
+					RetryInterval: "five minutes",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: "https://example.com/feed.xml"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.retryInterval")))
 		})
 	})
 
