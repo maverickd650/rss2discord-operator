@@ -159,7 +159,7 @@ metrics:
   secure: true
 
 ## Cert-manager integration for TLS certificates.
-## Required for webhook certificates and metrics endpoint certificates.
+## Required for metrics endpoint certificates.
 ##
 certManager:
   enabled: false
