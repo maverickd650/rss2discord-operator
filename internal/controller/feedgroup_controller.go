@@ -38,6 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -71,12 +72,14 @@ type FeedGroupReconciler struct {
 	Scheme               *runtime.Scheme
 	RSSClient            *rss.Client
 	DiscordClientBuilder func(webhookURL string) *discord.Client
+	Recorder             record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=rss2discord.maverickd650.dev,resources=feedgroups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rss2discord.maverickd650.dev,resources=feedgroups/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=rss2discord.maverickd650.dev,resources=feedgroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -201,7 +204,13 @@ func (r *FeedGroupReconciler) processFeed(
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
 		feedGroup.Status.LastError[feed.RSSUrl] = fetchErr.Error()
 		feedGroup.Status.RetryCount[feed.RSSUrl]++
-		return feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries), 0
+		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeFetchError).Inc()
+
+		retry := feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries)
+		if !retry {
+			r.recordPersistentFailure(feedGroup, feed.RSSUrl, "FetchFailed", fetchErr)
+		}
+		return retry, 0
 	}
 
 	// Persisting the new validators is deferred until the end of this
@@ -309,13 +318,17 @@ func (r *FeedGroupReconciler) processFeed(
 			var rateLimitErr *discord.RateLimitError
 			if errors.As(err, &rateLimitErr) {
 				wantRetry = true
+				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRateLimited).Inc()
 				if rateLimitErr.RetryAfter > rateLimitRetryAfter {
 					rateLimitRetryAfter = rateLimitErr.RetryAfter
 				}
 			} else {
 				feedGroup.Status.RetryCount[feed.RSSUrl]++
+				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSendError).Inc()
 				if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
 					wantRetry = true
+				} else {
+					r.recordPersistentFailure(feedGroup, feed.RSSUrl, "SendFailed", err)
 				}
 			}
 			continue
@@ -325,6 +338,7 @@ func (r *FeedGroupReconciler) processFeed(
 		feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entry.ID
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
 	}
 
 	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
@@ -338,6 +352,19 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 
 	return wantRetry, rateLimitRetryAfter
+}
+
+// recordPersistentFailure emits a Warning Event on feedGroup once a feed's
+// fetch or send retries are exhausted, so the failure is visible via
+// `kubectl describe feedgroup` instead of requiring a controller log dive.
+// It's a no-op if Recorder is unset (e.g. in unit tests that construct the
+// reconciler directly rather than through SetupWithManager).
+func (r *FeedGroupReconciler) recordPersistentFailure(feedGroup *v1alpha1.FeedGroup, url, reason string, err error) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(feedGroup, corev1.EventTypeWarning, reason,
+		"feed %s: giving up after exhausting retries: %v", url, err)
 }
 
 func (r *FeedGroupReconciler) resolveWebhookURL(ctx context.Context, feedGroup *v1alpha1.FeedGroup) (string, error) {
@@ -751,6 +778,9 @@ func maxRetryCount(specRetries int) int {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorderFor("feedgroup-controller")
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.FeedGroup{}).
 		Named("feedgroup").

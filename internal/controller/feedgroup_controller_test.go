@@ -32,6 +32,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rss2discordv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
@@ -898,10 +899,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
+			recorder := record.NewFakeRecorder(10)
 			reconciler := &FeedGroupReconciler{
 				Client:    k8sClient,
 				Scheme:    k8sClient.Scheme(),
 				RSSClient: testRSSClient(),
+				Recorder:  recorder,
 			}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -922,6 +925,18 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("FeedErrors"))
 			Expect(updated.Status.RetryCount[rssServer.URL]).To(Equal(1))
+			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
+
+			By("Reconciling again to exhaust the configured retries")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupNameRetry, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying a persistent-failure Event was recorded once retries were exhausted")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupNameRetry, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.RetryCount[rssServer.URL]).To(Equal(2))
+			Eventually(recorder.Events).Should(Receive(ContainSubstring("FetchFailed")))
 		})
 	})
 
