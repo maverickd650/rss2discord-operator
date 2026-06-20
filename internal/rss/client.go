@@ -32,6 +32,26 @@ type Entry struct {
 	Published   time.Time
 }
 
+// CacheValidators carries the conditional-GET validators returned by a
+// previous fetch of a feed, so a later fetch can ask the server "has this
+// changed since I last asked" instead of always re-downloading and
+// re-parsing the full feed body.
+type CacheValidators struct {
+	ETag         string
+	LastModified string
+}
+
+// FetchResult is the outcome of a conditional fetch. When NotModified is
+// true (the server responded 304), Entries is nil and the caller should
+// keep using whatever it already has; ETag/LastModified are carried through
+// unchanged in that case so the caller can keep sending them next time.
+type FetchResult struct {
+	Entries      []Entry
+	NotModified  bool
+	ETag         string
+	LastModified string
+}
+
 type Client struct {
 	httpClient *http.Client
 }
@@ -85,52 +105,77 @@ func isPublicIP(ip net.IP) bool {
 	return true
 }
 
-func (c *Client) FetchEntries(ctx context.Context, feedURL string) ([]Entry, error) {
+// FetchEntries fetches and parses feedURL. If validators carries an ETag
+// and/or LastModified from a previous fetch, they're sent as If-None-Match
+// / If-Modified-Since so an unchanged feed costs a 304 instead of a full
+// re-download and re-parse.
+func (c *Client) FetchEntries(ctx context.Context, feedURL string, validators CacheValidators) (FetchResult, error) {
 	if strings.TrimSpace(feedURL) == "" {
-		return nil, fmt.Errorf("feed URL is empty")
+		return FetchResult{}, fmt.Errorf("feed URL is empty")
 	}
 
 	parsedURL, err := url.ParseRequestURI(feedURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid feed URL %q: %w", feedURL, err)
+		return FetchResult{}, fmt.Errorf("invalid feed URL %q: %w", feedURL, err)
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return nil, fmt.Errorf("unsupported feed URL scheme %q: only http/https are allowed", parsedURL.Scheme)
+		return FetchResult{}, fmt.Errorf("unsupported feed URL scheme %q: only http/https are allowed", parsedURL.Scheme)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml, */*")
+	if validators.ETag != "" {
+		req.Header.Set("If-None-Match", validators.ETag)
+	}
+	if validators.LastModified != "" {
+		req.Header.Set("If-Modified-Since", validators.LastModified)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotModified {
+		result := FetchResult{NotModified: true, ETag: validators.ETag, LastModified: validators.LastModified}
+		if etag := resp.Header.Get("ETag"); etag != "" {
+			result.ETag = etag
+		}
+		if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
+			result.LastModified = lastModified
+		}
+		return result, nil
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("feed fetch failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return FetchResult{}, fmt.Errorf("feed fetch failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	limitedBody := io.LimitReader(resp.Body, maxFeedResponseBytes+1)
 	data, err := io.ReadAll(limitedBody)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	if len(data) > maxFeedResponseBytes {
-		return nil, fmt.Errorf("feed response exceeds maximum allowed size of %d bytes", maxFeedResponseBytes)
+		return FetchResult{}, fmt.Errorf("feed response exceeds maximum allowed size of %d bytes", maxFeedResponseBytes)
 	}
 
 	entries, err := parseFeed(data)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 
-	return entries, nil
+	return FetchResult{
+		Entries:      entries,
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
+	}, nil
 }
 
 type rssEnvelope struct {
