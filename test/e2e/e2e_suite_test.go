@@ -52,7 +52,10 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
+	// Tools and tasks are managed by mise; IMG is read from the environment by the
+	// mise tasks (utils.Run rebuilds cmd.Env from os.Environ, so this propagates).
+	ExpectWithOffset(1, os.Setenv("IMG", managerImage)).To(Succeed(), "Failed to set IMG")
+	cmd := exec.Command("mise", "run", "docker-build")
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 

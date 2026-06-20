@@ -5,36 +5,18 @@ echo "===================================="
 echo "Kubebuilder DevContainer Setup"
 echo "===================================="
 
-# Verify running as root (required for installing to /usr/local/bin and /etc)
+# Verify running as root (required for installing to /usr/share and /etc)
 if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: This script must be run as root"
   exit 1
 fi
 
-echo ""
-echo "Detecting system architecture..."
-# Detect architecture using uname
-MACHINE=$(uname -m)
-case "${MACHINE}" in
-  x86_64)
-    ARCH="amd64"
-    ;;
-  aarch64|arm64)
-    ARCH="arm64"
-    ;;
-  *)
-    echo "WARNING: Unsupported architecture ${MACHINE}, defaulting to amd64"
-    ARCH="amd64"
-    ;;
-esac
-echo "Architecture: ${ARCH}"
+BASH_COMPLETIONS_DIR="/usr/share/bash-completion/completions"
 
 echo ""
 echo "------------------------------------"
 echo "Setting up bash completion..."
 echo "------------------------------------"
-
-BASH_COMPLETIONS_DIR="/usr/share/bash-completion/completions"
 
 # Enable bash-completion in root's .bashrc (devcontainer runs as root)
 if ! grep -q "source /usr/share/bash-completion/bash_completion" ~/.bashrc 2>/dev/null; then
@@ -44,68 +26,48 @@ fi
 
 echo ""
 echo "------------------------------------"
-echo "Installing development tools..."
+echo "Installing mise + pinned dev tools..."
 echo "------------------------------------"
 
-# Install kind
-if ! command -v kind &> /dev/null; then
-  echo "Installing kind..."
-  curl -Lo /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/latest/kind-linux-${ARCH}"
-  chmod +x /usr/local/bin/kind
-  echo "kind installed successfully"
+# mise owns every tool version (see .mise/config.toml + .mise/mise.lock), so the
+# devcontainer matches CI exactly. Install mise, then let it install the toolchain.
+if ! command -v mise &> /dev/null; then
+  curl -fsSL https://mise.run | sh
+  export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# Generate kind bash completion
-if command -v kind &> /dev/null; then
-  if kind completion bash > "${BASH_COMPLETIONS_DIR}/kind" 2>/dev/null; then
-    echo "kind completion installed"
-  else
-    echo "WARNING: Failed to generate kind completion"
+# Activate mise for interactive shells.
+if ! grep -q 'mise activate bash' ~/.bashrc 2>/dev/null; then
+  echo 'eval "$(mise activate bash)"' >> ~/.bashrc
+  echo "Added mise activation to .bashrc"
+fi
+
+# Install the locked tool versions from the repo config.
+mise trust --yes
+mise install --locked
+
+# Make the tools available for the rest of this script.
+eval "$(mise activate bash --shims)"
+
+echo ""
+echo "------------------------------------"
+echo "Generating bash completions..."
+echo "------------------------------------"
+
+for tool in kind kubebuilder kubectl helm; do
+  if command -v "$tool" &> /dev/null; then
+    if "$tool" completion bash > "${BASH_COMPLETIONS_DIR}/${tool}" 2>/dev/null; then
+      echo "${tool} completion installed"
+    else
+      echo "WARNING: Failed to generate ${tool} completion"
+    fi
   fi
-fi
+done
 
-# Install kubebuilder
-if ! command -v kubebuilder &> /dev/null; then
-  echo "Installing kubebuilder..."
-  curl -Lo /usr/local/bin/kubebuilder "https://go.kubebuilder.io/dl/latest/linux/${ARCH}"
-  chmod +x /usr/local/bin/kubebuilder
-  echo "kubebuilder installed successfully"
-fi
-
-# Generate kubebuilder bash completion
-if command -v kubebuilder &> /dev/null; then
-  if kubebuilder completion bash > "${BASH_COMPLETIONS_DIR}/kubebuilder" 2>/dev/null; then
-    echo "kubebuilder completion installed"
-  else
-    echo "WARNING: Failed to generate kubebuilder completion"
-  fi
-fi
-
-# Install kubectl
-if ! command -v kubectl &> /dev/null; then
-  echo "Installing kubectl..."
-  KUBECTL_VERSION=$(curl -Ls https://dl.k8s.io/release/stable.txt)
-  curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
-  chmod +x /usr/local/bin/kubectl
-  echo "kubectl installed successfully"
-fi
-
-# Generate kubectl bash completion
-if command -v kubectl &> /dev/null; then
-  if kubectl completion bash > "${BASH_COMPLETIONS_DIR}/kubectl" 2>/dev/null; then
-    echo "kubectl completion installed"
-  else
-    echo "WARNING: Failed to generate kubectl completion"
-  fi
-fi
-
-# Generate Docker bash completion
 if command -v docker &> /dev/null; then
-  if docker completion bash > "${BASH_COMPLETIONS_DIR}/docker" 2>/dev/null; then
-    echo "docker completion installed"
-  else
-    echo "WARNING: Failed to generate docker completion"
-  fi
+  docker completion bash > "${BASH_COMPLETIONS_DIR}/docker" 2>/dev/null \
+    && echo "docker completion installed" \
+    || echo "WARNING: Failed to generate docker completion"
 fi
 
 echo ""
@@ -113,7 +75,6 @@ echo "------------------------------------"
 echo "Configuring Docker environment..."
 echo "------------------------------------"
 
-# Wait for Docker to be ready
 echo "Waiting for Docker to be ready..."
 for i in {1..30}; do
   if docker info >/dev/null 2>&1; then
@@ -128,26 +89,20 @@ done
 
 # Create kind network (ignore if already exists)
 if ! docker network inspect kind >/dev/null 2>&1; then
-  if docker network create kind >/dev/null 2>&1; then
-    echo "Created kind network"
-  else
-    echo "WARNING: Failed to create kind network (may already exist)"
-  fi
+  docker network create kind >/dev/null 2>&1 \
+    && echo "Created kind network" \
+    || echo "WARNING: Failed to create kind network (may already exist)"
 fi
 
 echo ""
 echo "------------------------------------"
 echo "Verifying installations..."
 echo "------------------------------------"
-kind version
-kubebuilder version
-kubectl version --client
+mise ls
 docker --version
-go version
 
 echo ""
 echo "===================================="
 echo "DevContainer ready!"
 echo "===================================="
-echo "All development tools installed successfully."
-echo "You can now start building Kubernetes operators."
+echo "Tools are managed by mise. Run tasks with 'mise run <task>' (see 'mise tasks')."

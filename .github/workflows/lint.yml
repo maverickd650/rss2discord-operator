@@ -25,18 +25,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      - name: Setup Mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
-          go-version-file: go.mod
+          install_args: --locked
 
-      - name: Cache local tool binaries
+      - name: Cache Go modules and build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: bin
-          key: ${{ runner.os }}-tools-${{ hashFiles('Makefile') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
 
       - name: Check linter configuration
-        run: make lint-config
+        run: mise run lint-config
+
       - name: Run linter
-        run: make lint
+        run: mise run lint
