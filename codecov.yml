@@ -9,3 +9,14 @@ coverage:
 
 comment:
   require_changes: true
+
+# Exclude code that isn't meaningfully unit-testable from coverage:
+#  - cmd/main.go is the manager entry point (wiring only, exercised via e2e).
+#  - test/** are e2e/test helpers, not production code.
+#  - **/zz_generated*.go are kubebuilder-generated DeepCopy methods.
+#  - api/** is generated scheme registration plus declaration-only CRD types.
+ignore:
+  - "cmd/**"
+  - "test/**"
+  - "**/zz_generated*.go"
+  - "api/**"
