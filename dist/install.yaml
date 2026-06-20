@@ -54,6 +54,20 @@ spec:
           spec:
             description: FeedGroupSpec defines the desired state of a FeedGroup.
             properties:
+              avatarURL:
+                description: |-
+                  AvatarURL overrides the webhook's default avatar for messages sent
+                  from this group.
+                type: string
+              catchUpLimit:
+                default: 5
+                description: |-
+                  CatchUpLimit caps how many backlog entries are sent to Discord the
+                  first time a feed is reconciled (i.e. before it has a recorded
+                  LastSeenEntry). Without this, adding a feed with a long history
+                  floods the webhook with every existing entry at once. Entries beyond
+                  the limit are treated as already seen and are not sent.
+                type: integer
               discordWebhookSecretRef:
                 description: |-
                   DiscordWebhookSecretRef points to the Secret containing the Discord webhook URL.
@@ -79,13 +93,76 @@ spec:
                 - key
                 type: object
                 x-kubernetes-map-type: atomic
+              embed:
+                description: |-
+                  Embed configures Discord embed rendering, used as the default for all
+                  feeds in this group unless a feed sets its own Embed.
+                properties:
+                  authorName:
+                    description: AuthorName is shown on the embed's author line.
+                    type: string
+                  color:
+                    description: |-
+                      Color is the embed's side-bar color, as a hex string (e.g. "#5865F2"
+                      or "5865F2").
+                    pattern: ^#?[0-9a-fA-F]{6}$
+                    type: string
+                  descriptionFormat:
+                    description: |-
+                      DescriptionFormat is the template used to render the embed's
+                      description. Supports the same placeholders as Format. Defaults to
+                      "{{.Description}}".
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled switches a feed's messages from plain text content to a
+                      Discord embed.
+                    type: boolean
+                  footerText:
+                    description: FooterText is shown in the embed's footer.
+                    type: string
+                type: object
               feeds:
-                description: Feeds is the list of RSS feed configurations in this
-                  group.
+                description: |-
+                  Feeds is the list of RSS feed configurations in this group. Capped at
+                  maxConcurrentFetches (see feedgroup_controller.go) so a single
+                  reconcile can't fan out an unbounded number of simultaneous outbound
+                  fetches.
                 items:
                   description: FeedSpec defines the configuration for a single RSS
                     feed.
                   properties:
+                    embed:
+                      description: |-
+                        Embed configures Discord embed rendering for this feed. Overrides the
+                        group-level Embed config if set.
+                      properties:
+                        authorName:
+                          description: AuthorName is shown on the embed's author line.
+                          type: string
+                        color:
+                          description: |-
+                            Color is the embed's side-bar color, as a hex string (e.g. "#5865F2"
+                            or "5865F2").
+                          pattern: ^#?[0-9a-fA-F]{6}$
+                          type: string
+                        descriptionFormat:
+                          description: |-
+                            DescriptionFormat is the template used to render the embed's
+                            description. Supports the same placeholders as Format. Defaults to
+                            "{{.Description}}".
+                          type: string
+                        enabled:
+                          default: false
+                          description: |-
+                            Enabled switches a feed's messages from plain text content to a
+                            Discord embed.
+                          type: boolean
+                        footerText:
+                          description: FooterText is shown in the embed's footer.
+                          type: string
+                      type: object
                     filter:
                       description: Filter defines how to filter entries from this
                         feed.
@@ -106,6 +183,18 @@ spec:
                         Format is the template for Discord messages for this feed.
                         Overrides the group-level format if set.
                       type: string
+                    forumThreadID:
+                      description: |-
+                        ForumThreadID posts messages into an existing forum thread/post
+                        instead of creating a new one. Takes precedence over ForumThreadName.
+                      type: string
+                    forumThreadName:
+                      description: |-
+                        ForumThreadName creates a new forum post for each message, named from
+                        this template, when DiscordWebhookSecretRef points at a forum
+                        channel's webhook. Supports the same placeholders as Format. Leave
+                        unset for regular text channels.
+                      type: string
                     paused:
                       description: Paused stops processing this feed if set to true.
                       type: boolean
@@ -117,6 +206,7 @@ spec:
                   required:
                   - rssUrl
                   type: object
+                maxItems: 50
                 type: array
               format:
                 default: |-
@@ -129,8 +219,10 @@ spec:
                 type: string
               interval:
                 default: 30m
-                description: Interval is the duration between feed checks (e.g., "30m",
-                  "1h").
+                description: |-
+                  Interval is the duration between feed checks (e.g., "30m", "1h"),
+                  parsed by Go's time.ParseDuration.
+                pattern: ^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                 type: string
               retries:
                 default: 3
@@ -139,8 +231,15 @@ spec:
                 type: integer
               retryInterval:
                 default: 5m
-                description: RetryInterval is the duration between retries (e.g.,
-                  "5m").
+                description: |-
+                  RetryInterval is the duration between retries (e.g., "5m"), parsed by
+                  Go's time.ParseDuration.
+                pattern: ^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+              username:
+                description: |-
+                  Username overrides the webhook's default display name for messages
+                  sent from this group.
                 type: string
             required:
             - discordWebhookSecretRef
@@ -211,6 +310,22 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              feedETag:
+                additionalProperties:
+                  type: string
+                description: |-
+                  FeedETag is a map of feed URL to the ETag header from its last fetch.
+                  Sent back as If-None-Match on the next fetch so an unchanged feed
+                  costs a 304 response instead of a full re-download and re-parse.
+                type: object
+              feedLastModified:
+                additionalProperties:
+                  type: string
+                description: |-
+                  FeedLastModified is a map of feed URL to the Last-Modified header from
+                  its last fetch. Sent back as If-Modified-Since on the next fetch,
+                  alongside FeedETag.
+                type: object
               lastChecked:
                 additionalProperties:
                   type: string
@@ -383,6 +498,13 @@ kind: ClusterRole
 metadata:
   name: rss2discord-operator-manager-role
 rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - ""
   resources:

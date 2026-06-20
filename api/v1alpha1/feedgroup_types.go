@@ -148,7 +148,11 @@ type FeedGroupSpec struct {
 	// +optional
 	RetryInterval string `json:"retryInterval,omitempty"`
 
-	// Feeds is the list of RSS feed configurations in this group.
+	// Feeds is the list of RSS feed configurations in this group. Capped at
+	// maxConcurrentFetches (see feedgroup_controller.go) so a single
+	// reconcile can't fan out an unbounded number of simultaneous outbound
+	// fetches.
+	// +kubebuilder:validation:MaxItems=50
 	Feeds []FeedSpec `json:"feeds"`
 
 	// CatchUpLimit caps how many backlog entries are sent to Discord the

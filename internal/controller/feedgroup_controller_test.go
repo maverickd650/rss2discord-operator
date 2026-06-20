@@ -813,6 +813,88 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(body).To(ContainSubstring(`"thumbnail":{"url":"https://example.com/pic.jpg"}`))
 			Expect(body).To(ContainSubstring(`"thread_name":"Embed Article"`))
 		})
+
+		It("should drop a non-http(s) entry link/image instead of forwarding it into the embed", func() {
+			const feedGroupName = "test-feedgroup-embed-unsafe-url"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server whose entry link/enclosure use a non-http(s) scheme")
+			rssServer := NewMockRSSServer(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>Test Feed</description>
+    <item>
+      <title>Unsafe URL Article</title>
+      <description>Body</description>
+      <link>javascript:alert(1)</link>
+      <guid>unsafe-url-article</guid>
+      <enclosure url="data:image/png;base64,AAAA" type="image/png" />
+    </item>
+  </channel>
+</rss>`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-embed-unsafe-url",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource with embed enabled")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-embed-unsafe-url"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Embed: &rss2discordv1alpha1.EmbedSpec{
+						Enabled: true,
+					},
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the embed's URL and thumbnail were dropped rather than carrying the unsafe scheme through")
+			Expect(discordServer.Bodies()).To(HaveLen(1))
+			body := discordServer.Bodies()[0]
+			Expect(body).NotTo(ContainSubstring("javascript:"))
+			Expect(body).NotTo(ContainSubstring("data:image"))
+			Expect(body).NotTo(ContainSubstring(`"thumbnail"`))
+		})
 	})
 
 	Describe("Error handling", func() {
@@ -941,6 +1023,97 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupNameRetry, Namespace: namespace}, updated)).To(Succeed())
 			Expect(updated.Status.RetryCount[rssServer.URL]).To(Equal(2))
 			Eventually(recorder.Events).Should(Receive(ContainSubstring("FetchFailed")))
+		})
+
+		It("should retry then give up on a deterministically failing render, instead of retrying forever", func() {
+			const feedGroupName = "test-feedgroup-render-error"
+
+			By("Creating a mock RSS feed server with one entry")
+			rssServer := NewMockRSSServer(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>Test Feed</description>
+    <item>
+      <title>Render Error Article</title>
+      <description>Body</description>
+      <link>https://example.com/render-error-article</link>
+      <guid>render-error-article</guid>
+    </item>
+  </channel>
+</rss>`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-render-error",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup with a template field that fails at execution time, not parse time")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-render-error"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "1m",
+					Retries:       2,
+					// {{.Bogus}} parses fine (the parser doesn't know field
+					// names) but fails on every Execute, since Title/
+					// Description/Link/Published are the only fields the
+					// render data struct has.
+					Format: "{{.Bogus}}",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			recorder := events.NewFakeRecorder(10)
+			reconciler := &FeedGroupReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				RSSClient: testRSSClient(),
+				Recorder:  recorder,
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the render error is tracked and counted toward retries")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastError).To(HaveKey(rssServer.URL()))
+			Expect(updated.Status.RetryCount[rssServer.URL()]).To(Equal(1))
+			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
+
+			By("Reconciling again to exhaust the configured retries")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying a persistent-failure Event was recorded once retries were exhausted, instead of retrying forever")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.RetryCount[rssServer.URL()]).To(Equal(2))
+			Eventually(recorder.Events).Should(Receive(ContainSubstring("RenderFailed")))
 		})
 	})
 
@@ -1500,6 +1673,39 @@ var _ = Describe("FeedGroup Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.retryInterval")))
+		})
+
+		It("should reject more than 50 Feeds at apply time", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-too-many-feeds",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			feeds := make([]rss2discordv1alpha1.FeedSpec, 51)
+			for i := range feeds {
+				feeds[i] = rss2discordv1alpha1.FeedSpec{RSSUrl: fmt.Sprintf("https://example.com/feed-%d.xml", i)}
+			}
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-feedgroup-too-many-feeds",
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-too-many-feeds"},
+						Key:                  secretURLKey,
+					},
+					Feeds: feeds,
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.feeds")))
 		})
 	})
 

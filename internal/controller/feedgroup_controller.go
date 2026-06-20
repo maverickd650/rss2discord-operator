@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	neturl "net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -66,6 +67,12 @@ const defaultCatchUpLimit = 5
 // the API rejects anything longer. Full article bodies in a feed's
 // description can easily exceed this once stripped to plain text.
 const maxDiscordMessageLength = 2000
+
+// maxConcurrentFetches bounds how many feed fetches a single reconcile runs
+// in parallel. Feeds.MaxItems caps the list at 50 (see FeedGroupSpec), but
+// without this a FeedGroup at that cap would still open 50 simultaneous
+// outbound connections every reconcile.
+const maxConcurrentFetches = 10
 
 // FeedGroupReconciler reconciles a FeedGroup object
 type FeedGroupReconciler struct {
@@ -140,18 +147,24 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Feeds are independent network fetches, so fetch them concurrently
-	// rather than paying each feed's fetch timeout sequentially. Sending and
-	// status-map updates below remain single-threaded, so no locking is
-	// needed for the rest of the reconcile. Reading (not writing)
-	// feedGroup.Status here is safe concurrently with itself, since nothing
-	// mutates it until after wg.Wait().
+	// rather than paying each feed's fetch timeout sequentially. A semaphore
+	// caps how many run at once, since a FeedGroup at the Feeds.MaxItems
+	// limit would otherwise open that many simultaneous outbound connections
+	// every reconcile. Sending and status-map updates below remain
+	// single-threaded, so no locking is needed for the rest of the
+	// reconcile. Reading (not writing) feedGroup.Status here is safe
+	// concurrently with itself, since nothing mutates it until after
+	// wg.Wait().
 	fetched := make([]rss.FetchResult, len(activeFeeds))
 	fetchErrs := make([]error, len(activeFeeds))
+	sem := make(chan struct{}, maxConcurrentFetches)
 	var wg sync.WaitGroup
 	for i, feed := range activeFeeds {
 		wg.Add(1)
 		go func(i int, rssURL string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			validators := rss.CacheValidators{
 				ETag:         feedGroup.Status.FeedETag[rssURL],
 				LastModified: feedGroup.Status.FeedLastModified[rssURL],
@@ -314,7 +327,19 @@ func (r *FeedGroupReconciler) processFeed(
 		if err != nil {
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
 			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-			wantRetry = true
+			feedGroup.Status.RetryCount[feed.RSSUrl]++
+			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRenderError).Inc()
+
+			// A render error is deterministic for a given entry+template, so
+			// once retries are exhausted, retrying forever would just spin
+			// at RetryInterval without ever making progress. Treat it like a
+			// send-side persistent failure: stop retrying and surface an
+			// Event instead of looping indefinitely.
+			if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
+				wantRetry = true
+			} else {
+				r.recordPersistentFailure(feedGroup, feed.RSSUrl, "RenderFailed", err)
+			}
 			continue
 		}
 
@@ -609,6 +634,19 @@ func parseHexColor(s string) int {
 	return int(v)
 }
 
+// httpURLOrEmpty returns rawURL unchanged if it's a well-formed http(s) URL,
+// or "" otherwise. Entry links/images come straight from feed XML, which is
+// untrusted external content; Discord embeds (msg.Embed.URL/ThumbnailURL)
+// are happy to carry through a javascript:/data: URI verbatim, so this keeps
+// those out before they ever reach a user's client.
+func httpURLOrEmpty(rawURL string) string {
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+	return rawURL
+}
+
 // htmlBlockTagRegex matches HTML tags that delimit block-level content (or
 // line breaks), which are converted to newlines so stripped text retains
 // paragraph/list structure instead of running together.
@@ -696,10 +734,10 @@ func buildDiscordMessage(
 		msg.Embed = &discord.Embed{
 			Title:        truncateMessage(entry.Title, maxEmbedTitleLength),
 			Description:  description,
-			URL:          entry.Link,
+			URL:          httpURLOrEmpty(entry.Link),
 			Color:        parseHexColor(embedSpec.Color),
 			Timestamp:    entry.Published.UTC().Format(time.RFC3339),
-			ThumbnailURL: entry.Image,
+			ThumbnailURL: httpURLOrEmpty(entry.Image),
 			AuthorName:   embedSpec.AuthorName,
 			FooterText:   embedSpec.FooterText,
 		}
