@@ -94,6 +94,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	r.setDefaultStatusMaps(&feedGroup)
+	pruneRemovedFeedStatus(&feedGroup)
 
 	webhookURL, err := r.resolveWebhookURL(ctx, &feedGroup)
 	if err != nil {
@@ -203,16 +204,23 @@ func (r *FeedGroupReconciler) processFeed(
 		return feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries), 0
 	}
 
-	// Persist whatever validators the server returned (200 or 304) so the
-	// next reconcile's conditional GET uses the freshest ones.
-	if fetchResult.ETag != "" {
-		feedGroup.Status.FeedETag[feed.RSSUrl] = fetchResult.ETag
-	}
-	if fetchResult.LastModified != "" {
-		feedGroup.Status.FeedLastModified[feed.RSSUrl] = fetchResult.LastModified
+	// Persisting the new validators is deferred until the end of this
+	// function (and skipped entirely if anything below needs a retry): if a
+	// send fails, storing the new ETag now would make the next reconcile's
+	// conditional GET return 304 before the unsent entry is ever retried,
+	// silently dropping it.
+	persistValidators := func() {
+		if fetchResult.ETag != "" {
+			feedGroup.Status.FeedETag[feed.RSSUrl] = fetchResult.ETag
+		}
+		if fetchResult.LastModified != "" {
+			feedGroup.Status.FeedLastModified[feed.RSSUrl] = fetchResult.LastModified
+		}
 	}
 
 	if fetchResult.NotModified {
+		// A 304 has nothing new to retry, so it's always safe to persist.
+		persistValidators()
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		return false, 0
@@ -220,6 +228,8 @@ func (r *FeedGroupReconciler) processFeed(
 
 	entries := fetchResult.Entries
 	if len(entries) == 0 {
+		// Nothing to send, so it's always safe to persist.
+		persistValidators()
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		return false, 0
@@ -319,6 +329,14 @@ func (r *FeedGroupReconciler) processFeed(
 
 	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
 
+	// Only persist now that every entry from this fetch was either sent or
+	// filtered out; if anything is still pending retry, keep the old
+	// validators so the next fetch returns the full body again instead of a
+	// 304 that would skip the unsent entry for good.
+	if !wantRetry && rateLimitRetryAfter == 0 {
+		persistValidators()
+	}
+
 	return wantRetry, rateLimitRetryAfter
 }
 
@@ -362,6 +380,55 @@ func (r *FeedGroupReconciler) setDefaultStatusMaps(feedGroup *v1alpha1.FeedGroup
 	}
 	if feedGroup.Status.FeedLastModified == nil {
 		feedGroup.Status.FeedLastModified = map[string]string{}
+	}
+}
+
+// pruneRemovedFeedStatus deletes every per-feed-URL status entry that no
+// longer corresponds to a feed in feedGroup.Spec.Feeds. Without this, editing
+// or removing a feed leaves its LastChecked/LastSeenEntry/LastSent/LastError/
+// RetryCount/FeedETag/FeedLastModified entries in status forever, the same
+// unbounded-growth problem maxLastSentPerFeed guards against one level down.
+// Paused feeds keep their status, since they're still part of the spec.
+func pruneRemovedFeedStatus(feedGroup *v1alpha1.FeedGroup) {
+	specURLs := make(map[string]bool, len(feedGroup.Spec.Feeds))
+	for _, feed := range feedGroup.Spec.Feeds {
+		specURLs[feed.RSSUrl] = true
+	}
+
+	for url := range feedGroup.Status.LastChecked {
+		if !specURLs[url] {
+			delete(feedGroup.Status.LastChecked, url)
+		}
+	}
+	for url := range feedGroup.Status.LastSeenEntry {
+		if !specURLs[url] {
+			delete(feedGroup.Status.LastSeenEntry, url)
+		}
+	}
+	for url := range feedGroup.Status.LastSent {
+		if !specURLs[url] {
+			delete(feedGroup.Status.LastSent, url)
+		}
+	}
+	for url := range feedGroup.Status.LastError {
+		if !specURLs[url] {
+			delete(feedGroup.Status.LastError, url)
+		}
+	}
+	for url := range feedGroup.Status.RetryCount {
+		if !specURLs[url] {
+			delete(feedGroup.Status.RetryCount, url)
+		}
+	}
+	for url := range feedGroup.Status.FeedETag {
+		if !specURLs[url] {
+			delete(feedGroup.Status.FeedETag, url)
+		}
+	}
+	for url := range feedGroup.Status.FeedLastModified {
+		if !specURLs[url] {
+			delete(feedGroup.Status.FeedLastModified, url)
+		}
 	}
 }
 
