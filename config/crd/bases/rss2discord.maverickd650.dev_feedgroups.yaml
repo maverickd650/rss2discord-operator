@@ -116,8 +116,11 @@ spec:
                     type: string
                 type: object
               feeds:
-                description: Feeds is the list of RSS feed configurations in this
-                  group.
+                description: |-
+                  Feeds is the list of RSS feed configurations in this group. Capped at
+                  maxConcurrentFetches (see feedgroup_controller.go) so a single
+                  reconcile can't fan out an unbounded number of simultaneous outbound
+                  fetches.
                 items:
                   description: FeedSpec defines the configuration for a single RSS
                     feed.
@@ -195,6 +198,7 @@ spec:
                   required:
                   - rssUrl
                   type: object
+                maxItems: 50
                 type: array
               format:
                 default: |-

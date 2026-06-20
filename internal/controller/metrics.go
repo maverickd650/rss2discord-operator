@@ -29,6 +29,7 @@ const (
 	outcomeSent        = "sent"
 	outcomeFetchError  = "fetch_error"
 	outcomeSendError   = "send_error"
+	outcomeRenderError = "render_error"
 	outcomeRateLimited = "rate_limited"
 )
 

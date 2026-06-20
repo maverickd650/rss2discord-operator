@@ -97,9 +97,25 @@ func newDefaultHTTPClient() *http.Client {
 	}
 }
 
+// cgnatBlock is the shared address space carriers use for NAT
+// (RFC 6598, 100.64.0.0/10). net.IP.IsPrivate doesn't cover it, but like
+// RFC 1918 space it can route to internal infrastructure that a feed URL
+// must not be able to reach.
+var cgnatBlock = func() *net.IPNet {
+	_, block, _ := net.ParseCIDR("100.64.0.0/10")
+	return block
+}()
+
 func isPublicIP(ip net.IP) bool {
+	// Unwrap IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) so the checks below
+	// (several of which only special-case the 4-byte form) see the actual
+	// IPv4 address instead of treating it as an opaque IPv6 literal.
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() {
+		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || cgnatBlock.Contains(ip) {
 		return false
 	}
 	return true
