@@ -17,7 +17,7 @@ jobs:
   test-chart:
     permissions:
       contents: read
-    name: Run on Ubuntu
+    name: Test Chart
     runs-on: ubuntu-latest
     env:
       IMG: controller:latest
