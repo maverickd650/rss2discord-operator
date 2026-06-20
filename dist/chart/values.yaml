@@ -16,7 +16,7 @@ manager:
   replicas: 1
 
   image:
-    repository: controller
+    repository: ghcr.io/maverickd650/rss2discord-operator
     ## Image tag (defaults to Chart.appVersion if not set)
     ##
     # tag: ""
@@ -145,7 +145,7 @@ crd:
   # Install CRDs with the chart
   enabled: true
   # Keep CRDs when uninstalling
-  keep: true
+  keep: false
 
 ## Controller metrics endpoint.
 ## Enable to expose /metrics endpoint
