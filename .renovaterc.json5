@@ -1,0 +1,146 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    "docker:enableMajor",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":automergeBranch",
+    ":dependencyDashboard",
+    ":disableRateLimiting",
+  ],
+  dependencyDashboardTitle: "Renovate Dashboard 🤖",
+  postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 3am on the first day of the month"],
+  },
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Process annotated dependencies",
+      managerFilePatterns: ["/\\.env(?:\\.j2)?$/", "/\\.sh(?:\\.j2)?$/", "/\\.yaml(?:\\.j2)?$/"],
+      matchStrings: [
+        // # renovate: datasource=github-releases depName=foo/bar
+        // foobar_version: v1.0.0
+        "datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n.+(:\\s|=)(&\\S+\\s)?[\"']?(?<currentValue>[^\"'\\s]+)[\"']?",
+      ],
+      datasourceTemplate: "{{#if datasource}}{{{datasource}}}{{else}}github-releases{{/if}}",
+    },
+  ],
+  packageRules: [
+    // --- automerge ---
+    {
+      description: "Auto-merge GitHub Actions",
+      matchManagers: ["github-actions"],
+      automerge: true,
+      automergeType: "branch",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      minimumReleaseAge: "3 days",
+      ignoreTests: true,
+    },
+    {
+      description: "Auto-merge trusted GitHub Actions",
+      matchManagers: ["github-actions"],
+      matchPackageNames: [
+        "/^actions\//",
+        "/^anchore\//",
+        "/^docker\//",
+        "/^renovatebot\//",
+        "/^sigstore\//",
+      ],
+      automerge: true,
+      automergeType: "branch",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      minimumReleaseAge: "1 minute",
+      ignoreTests: true,
+    },
+    {
+      description: "Auto-merge trusted Go modules",
+      matchManagers: ["gomod"],
+      matchPackageNames: ["/^k8s\\.io\\//", "/^sigs\\.k8s\\.io\\//", "/^github\\.com\\/onsi\\//"],
+      automerge: true,
+      automergeType: "branch",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      minimumReleaseAge: "3 days",
+      ignoreTests: true,
+    },
+    // --- labels ---
+    {
+      matchUpdateTypes: ["major"],
+      labels: ["type/major"],
+    },
+    {
+      matchUpdateTypes: ["minor"],
+      labels: ["type/minor"],
+    },
+    {
+      matchUpdateTypes: ["patch"],
+      labels: ["type/patch"],
+    },
+    {
+      matchUpdateTypes: ["digest"],
+      labels: ["type/digest"],
+    },
+    // --- semantic commits ---
+    {
+      matchUpdateTypes: ["major"],
+      semanticCommitType: "feat",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}})!:",
+      commitMessageExtra: "({{currentVersion}} → {{newVersion}})",
+    },
+    {
+      matchUpdateTypes: ["minor"],
+      semanticCommitType: "feat",
+      commitMessageExtra: "({{currentVersion}} → {{newVersion}})",
+    },
+    {
+      matchUpdateTypes: ["patch"],
+      semanticCommitType: "fix",
+      commitMessageExtra: "({{currentVersion}} → {{newVersion}})",
+    },
+    {
+      matchUpdateTypes: ["digest"],
+      semanticCommitType: "fix",
+      commitMessageExtra: "({{currentDigestShort}} → {{newDigestShort}})",
+    },
+    {
+      matchDatasources: ["docker"],
+      semanticCommitScope: "container",
+      commitMessageTopic: "image {{depName}}",
+    },
+    // github-actions and gomod are CI/build tooling, not the released binary/image,
+    // so a major bump of them must not count as a breaking change: override the
+    // major-update `!:` prefix (set above) with a plain `:`, so release-please
+    // never cuts a version bump from a `ci`/`chore` tooling update alone.
+    {
+      matchManagers: ["github-actions"],
+      semanticCommitType: "ci",
+      semanticCommitScope: "github-action",
+      commitMessageTopic: "action {{depName}}",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
+    },
+    {
+      matchManagers: ["gomod"],
+      semanticCommitType: "chore",
+      semanticCommitScope: "deps",
+      commitMessageTopic: "module {{depName}}",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
+    },
+    {
+      matchDatasources: ["github-releases"],
+      semanticCommitType: "chore",
+      semanticCommitScope: "github-release",
+      commitMessageTopic: "release {{depName}}",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
+    },
+    // --- misc ---
+    {
+      description: "Group the Go toolchain version with go.mod's go directive",
+      matchManagers: ["gomod"],
+      matchDepNames: ["go"],
+      matchFileNames: ["go.mod"],
+      groupName: "Go toolchain",
+      groupSlug: "go-toolchain",
+    },
+  ],
+}
