@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.2.1...v0.2.2) (2026-06-20)
+
+
+### Bug Fixes
+
+* disable informer cache for Secrets to match get-only RBAC ([#8](https://github.com/maverickd650/rss2discord-operator/issues/8)) ([b8a1271](https://github.com/maverickd650/rss2discord-operator/commit/b8a1271f6c9940e81fa5097555d6ff81c5da8900))
+
 ## [0.2.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.2.0...v0.2.1) (2026-06-20)
 
 
