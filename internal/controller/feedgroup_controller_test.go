@@ -328,8 +328,8 @@ var _ = Describe("FeedGroup Controller", func() {
 				pubDate     string
 				guid        string
 			}
-			var entries []item
-			for i := 0; i < 10; i++ {
+			entries := make([]item, 0, 10)
+			for i := range 10 {
 				entries = append(entries, item{
 					title:       fmt.Sprintf("Backlog Article %d", i),
 					description: "An old article",
