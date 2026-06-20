@@ -33,6 +33,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -99,18 +100,24 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.setDefaultStatusMaps(&feedGroup)
 	pruneRemovedFeedStatus(&feedGroup)
 
+	// Snapshot status after the maps/pruning above (which only normalize
+	// existing state) but before anything that reflects this reconcile's
+	// outcome, so requeueWithStatus can skip the API write entirely when
+	// nothing actually changed.
+	statusSnapshot := feedGroup.Status.DeepCopy()
+
 	webhookURL, err := r.resolveWebhookURL(ctx, &feedGroup)
 	if err != nil {
 		log.Error(err, "failed to resolve Discord webhook URL")
 		feedGroup.Status.LastError["webhook"] = err.Error()
-		return r.requeueWithStatus(ctx, &feedGroup, feedGroup.Spec.RetryInterval, 5*time.Minute)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute)
 	}
 
 	if webhookURL == "" {
 		err = fmt.Errorf("discord webhook URL is empty")
 		log.Error(err, "invalid webhook secret")
 		feedGroup.Status.LastError["webhook"] = err.Error()
-		return r.requeueWithStatus(ctx, &feedGroup, feedGroup.Spec.RetryInterval, 5*time.Minute)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -167,7 +174,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if discordRetryAfter > 0 {
-		return r.requeueWithStatus(ctx, &feedGroup, "", discordRetryAfter)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, "", discordRetryAfter)
 	}
 
 	interval := feedGroup.Spec.Interval
@@ -177,7 +184,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		fallback = 5 * time.Minute
 	}
 
-	return r.requeueWithStatus(ctx, &feedGroup, interval, fallback)
+	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback)
 }
 
 // processFeed fetches/filters/sends entries for a single feed and updates
@@ -459,7 +466,12 @@ func pruneRemovedFeedStatus(feedGroup *v1alpha1.FeedGroup) {
 	}
 }
 
-func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, interval string, fallback time.Duration) (ctrl.Result, error) {
+// requeueWithStatus persists feedGroup's status and requeues after the given
+// interval (falling back to fallback if interval is unset or invalid). The
+// Status().Update call is skipped when the status hasn't actually changed
+// from original, since a conditional-GET 304 makes the common reconcile a
+// no-op that would otherwise still pay for a status write every interval.
+func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, original *v1alpha1.FeedGroupStatus, interval string, fallback time.Duration) (ctrl.Result, error) {
 	duration, err := parseDurationWithDefault(interval, fallback)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -467,6 +479,10 @@ func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *
 
 	feedGroup.Status.ObservedGeneration = feedGroup.Generation
 	setReadyCondition(feedGroup)
+
+	if apiequality.Semantic.DeepEqual(original, &feedGroup.Status) {
+		return ctrl.Result{RequeueAfter: duration}, nil
+	}
 
 	if err := r.Status().Update(ctx, feedGroup); err != nil {
 		return ctrl.Result{}, err
