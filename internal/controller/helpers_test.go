@@ -9,6 +9,9 @@ import (
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
 )
 
+// shortContent is reused across truncation test cases below.
+const shortContent = "short"
+
 func TestParseHexColor(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -58,7 +61,7 @@ func TestStripHTML(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "plain text unchanged", input: "hello world", want: "hello world"},
+		{name: "plain text unchanged", input: "plain text body", want: "plain text body"},
 		{name: "paragraphs become blank lines", input: "<p>one</p><p>two</p>", want: "one\n\ntwo"},
 		{name: "br becomes newline", input: "a<br>b", want: "a\nb"},
 		{name: "inline tags stripped", input: "<b>bold</b> text", want: "bold text"},
@@ -81,9 +84,9 @@ func TestTruncateMessage(t *testing.T) {
 		max     int
 		want    string
 	}{
-		{name: "under limit unchanged", content: "hello", max: 10, want: "hello"},
-		{name: "exactly at limit unchanged", content: "hello", max: 5, want: "hello"},
-		{name: "truncated with ellipsis", content: "hello world", max: 5, want: "hell…"},
+		{name: "under limit unchanged", content: shortContent, max: 10, want: shortContent},
+		{name: "exactly at limit unchanged", content: shortContent, max: 5, want: shortContent},
+		{name: "truncated with ellipsis", content: "truncate me", max: 5, want: "trun…"},
 		{name: "multibyte trimmed by rune", content: "日本語テスト", max: 3, want: "日本…"},
 	}
 	for _, tc := range cases {
@@ -212,9 +215,10 @@ func TestPruneLastSent(t *testing.T) {
 }
 
 func TestComputeEntryKey(t *testing.T) {
-	a := computeEntryKey(rss.Entry{ID: "1", Link: "http://x", Title: "T"})
-	b := computeEntryKey(rss.Entry{ID: "1", Link: "http://x", Title: "T"})
-	c := computeEntryKey(rss.Entry{ID: "2", Link: "http://x", Title: "T"})
+	const entryLink = "http://x"
+	a := computeEntryKey(rss.Entry{ID: "1", Link: entryLink, Title: "T"})
+	b := computeEntryKey(rss.Entry{ID: "1", Link: entryLink, Title: "T"})
+	c := computeEntryKey(rss.Entry{ID: "2", Link: entryLink, Title: "T"})
 
 	if a != b {
 		t.Fatal("expected identical entries to produce the same key")

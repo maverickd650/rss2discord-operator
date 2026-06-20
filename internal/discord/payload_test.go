@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// fiveRunes is reused across the truncateRunes test cases below.
+const fiveRunes = "abcde"
+
 func TestParseRetryAfter(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -46,10 +49,10 @@ func TestTruncateRunes(t *testing.T) {
 		max   int
 		want  string
 	}{
-		{name: "under limit unchanged", runes: "hello", max: 10, want: "hello"},
-		{name: "exactly at limit unchanged", runes: "hello", max: 5, want: "hello"},
-		{name: "zero max yields empty", runes: "hello", max: 0, want: ""},
-		{name: "negative max yields empty", runes: "hello", max: -1, want: ""},
+		{name: "under limit unchanged", runes: fiveRunes, max: 10, want: fiveRunes},
+		{name: "exactly at limit unchanged", runes: fiveRunes, max: 5, want: fiveRunes},
+		{name: "zero max yields empty", runes: fiveRunes, max: 0, want: ""},
+		{name: "negative max yields empty", runes: fiveRunes, max: -1, want: ""},
 		{name: "truncates with ellipsis", runes: "hello world", max: 5, want: "hell…"},
 		// The ellipsis is multi-byte but a single rune, so a multibyte body is
 		// trimmed by rune count, not byte count.
@@ -66,7 +69,7 @@ func TestTruncateRunes(t *testing.T) {
 
 func TestSendMessage_EmptyWebhookURL(t *testing.T) {
 	c := NewClient("")
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(context.Background(), "empty webhook test")
 	if err == nil || !strings.Contains(err.Error(), "webhook URL is empty") {
 		t.Fatalf("expected empty-URL error, got %v", err)
 	}
@@ -82,7 +85,7 @@ func TestSendMessage_EmptyContentAndEmbed(t *testing.T) {
 
 func TestSendMessage_InvalidWebhookURL(t *testing.T) {
 	c := NewClient("://not a url")
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(context.Background(), "invalid url test")
 	if err == nil {
 		t.Fatal("expected error for malformed webhook URL, got nil")
 	}
@@ -99,7 +102,7 @@ func TestSendMessage_ReturnsRateLimitError(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(context.Background(), "rate limited test")
 
 	var rle *RateLimitError
 	if !errors.As(err, &rle) {
@@ -121,7 +124,7 @@ func TestSendMessage_ReturnsErrorOnNon2xx(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(context.Background(), "non-2xx test")
 	if err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("expected 400 error, got %v", err)
 	}

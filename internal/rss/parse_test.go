@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+// Shared literals reused across table-driven cases below; pulled into
+// constants so repeated values don't trip goconst.
+const (
+	relAlternate = "alternate"
+	relEnclosure = "enclosure"
+	imageJPEG    = "image/jpeg"
+	picJPEGURL   = "http://pic.jpg"
+	thumbJPEGURL = "http://thumb.jpg"
+	encURL       = "http://enc"
+)
+
 func TestParseTime(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -57,10 +68,10 @@ func TestPrimaryLink(t *testing.T) {
 		links []atomLink
 		want  string
 	}{
-		{name: "none", links: nil, want: ""},
+		{name: "no links", links: nil, want: ""},
 		{
 			name:  "explicit alternate preferred over enclosure",
-			links: []atomLink{{Href: "http://enc", Rel: "enclosure"}, {Href: "http://alt", Rel: "alternate"}},
+			links: []atomLink{{Href: encURL, Rel: relEnclosure}, {Href: "http://alt", Rel: relAlternate}},
 			want:  "http://alt",
 		},
 		{
@@ -70,8 +81,8 @@ func TestPrimaryLink(t *testing.T) {
 		},
 		{
 			name:  "falls back to first when no alternate",
-			links: []atomLink{{Href: "http://enc", Rel: "enclosure"}, {Href: "http://self", Rel: "self"}},
-			want:  "http://enc",
+			links: []atomLink{{Href: encURL, Rel: relEnclosure}, {Href: "http://self", Rel: "self"}},
+			want:  encURL,
 		},
 	}
 
@@ -90,20 +101,20 @@ func TestEnclosureImage(t *testing.T) {
 		links []atomLink
 		want  string
 	}{
-		{name: "none", links: nil, want: ""},
+		{name: "no links", links: nil, want: ""},
 		{
 			name:  "image enclosure matched",
-			links: []atomLink{{Href: "http://pic.jpg", Rel: "enclosure", Type: "image/jpeg"}},
-			want:  "http://pic.jpg",
+			links: []atomLink{{Href: picJPEGURL, Rel: relEnclosure, Type: imageJPEG}},
+			want:  picJPEGURL,
 		},
 		{
 			name:  "non-image enclosure ignored",
-			links: []atomLink{{Href: "http://file.pdf", Rel: "enclosure", Type: "application/pdf"}},
+			links: []atomLink{{Href: "http://file.pdf", Rel: relEnclosure, Type: "application/pdf"}},
 			want:  "",
 		},
 		{
 			name:  "alternate link with image type ignored",
-			links: []atomLink{{Href: "http://pic.jpg", Rel: "alternate", Type: "image/jpeg"}},
+			links: []atomLink{{Href: picJPEGURL, Rel: relAlternate, Type: imageJPEG}},
 			want:  "",
 		},
 	}
@@ -145,18 +156,18 @@ func TestEntryImage(t *testing.T) {
 		content   []rssMediaURL
 		want      string
 	}{
-		{name: "none", want: ""},
+		{name: "nothing set", want: ""},
 		{
 			name:      "enclosure preferred",
-			enclosure: &rssEnclosure{URL: "http://enc.jpg", Type: "image/jpeg"},
-			thumbnail: &rssMediaURL{URL: "http://thumb.jpg"},
+			enclosure: &rssEnclosure{URL: "http://enc.jpg", Type: imageJPEG},
+			thumbnail: &rssMediaURL{URL: thumbJPEGURL},
 			want:      "http://enc.jpg",
 		},
 		{
 			name:      "non-image enclosure skipped, falls to thumbnail",
 			enclosure: &rssEnclosure{URL: "http://file.mp3", Type: "audio/mpeg"},
-			thumbnail: &rssMediaURL{URL: "http://thumb.jpg"},
-			want:      "http://thumb.jpg",
+			thumbnail: &rssMediaURL{URL: thumbJPEGURL},
+			want:      thumbJPEGURL,
 		},
 		{
 			name:    "media content image used when no enclosure/thumbnail",
@@ -170,9 +181,9 @@ func TestEntryImage(t *testing.T) {
 		},
 		{
 			name:      "enclosure with empty url skipped",
-			enclosure: &rssEnclosure{URL: "", Type: "image/jpeg"},
-			thumbnail: &rssMediaURL{URL: "http://thumb.jpg"},
-			want:      "http://thumb.jpg",
+			enclosure: &rssEnclosure{URL: "", Type: imageJPEG},
+			thumbnail: &rssMediaURL{URL: thumbJPEGURL},
+			want:      thumbJPEGURL,
 		},
 	}
 
