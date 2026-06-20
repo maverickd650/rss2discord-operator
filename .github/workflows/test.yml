@@ -3,7 +3,9 @@ name: Tests
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md"]
   pull_request:
+    paths-ignore: ["**.md"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,10 +36,13 @@ jobs:
           path: bin
           key: ${{ runner.os }}-tools-${{ hashFiles('Makefile') }}
 
-      - name: Running Tests
+      - name: Check go.mod tidiness
         run: |
           go mod tidy
-          make test
+          git diff --exit-code go.mod go.sum
+
+      - name: Running Tests
+        run: make test
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
