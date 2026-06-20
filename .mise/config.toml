@@ -1,0 +1,189 @@
+# Tool versions and dev tasks. This is the single source of truth — CI installs
+# these via jdx/mise-action and runs `mise run <task>`, so local == CI.
+# Renovate's native `mise` manager keeps [tools] current.
+[tools]
+go = "1.26.4"
+golangci-lint = "2.12.2" # must match the `version:` in .custom-gcl.yml
+kube-controller-tools = "0.21.0"
+kustomize = "5.8.1"
+setup-envtest = "0.24.1" # tracks sigs.k8s.io/controller-runtime in go.mod
+helm = "4.2.2"
+kind = "0.32.0"
+kubectl = "1.36.2"
+cosign = "3.1.1"
+kubebuilder = "4.15.0"
+
+[env]
+# Image used by build/deploy targets; override with `IMG=... mise run docker-build`.
+IMG = "{{ env.IMG | default(value='controller:latest') }}"
+KIND_CLUSTER = "{{ env.KIND_CLUSTER | default(value='rss2discord-operator-test-e2e') }}"
+CONTAINER_TOOL = "{{ env.CONTAINER_TOOL | default(value='docker') }}"
+
+##@ Development
+
+[tasks.manifests]
+description = "Generate WebhookConfiguration, ClusterRole and CRD objects"
+run = "controller-gen rbac:roleName=manager-role crd webhook paths='./...' output:crd:artifacts:config=config/crd/bases"
+
+[tasks.generate]
+description = "Generate DeepCopy method implementations"
+run = "controller-gen object:headerFile=hack/boilerplate.go.txt,year=$(date +%Y) paths='./...'"
+
+[tasks.fmt]
+description = "Run go fmt against code"
+run = "go fmt ./..."
+
+[tasks.vet]
+description = "Run go vet against code"
+run = "go vet ./..."
+
+# golangci-lint is installed by mise as the stock binary, but this project uses
+# module plugins (.custom-gcl.yml → logcheck), so we must build a custom binary
+# and run that. `golangci-lint custom` is fast with a warm Go build cache.
+[tasks.golangci-lint-custom]
+description = "Build the custom golangci-lint binary with .custom-gcl.yml plugins"
+sources = [".custom-gcl.yml"]
+outputs = ["bin/golangci-lint-custom"]
+run = "golangci-lint custom --destination bin --name golangci-lint-custom"
+
+[tasks.lint]
+description = "Run golangci-lint linter"
+depends = ["golangci-lint-custom"]
+run = "./bin/golangci-lint-custom run"
+
+[tasks.lint-fix]
+description = "Run golangci-lint linter and perform fixes"
+depends = ["golangci-lint-custom"]
+run = "./bin/golangci-lint-custom run --fix"
+
+[tasks.lint-config]
+description = "Verify golangci-lint linter configuration"
+depends = ["golangci-lint-custom"]
+run = "./bin/golangci-lint-custom config verify"
+
+[tasks.test]
+description = "Run unit tests"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = '''
+# ENVTEST_K8S_VERSION is derived from k8s.io/api, e.g. v0.36.2 -> 1.36, so the
+# envtest binaries track the k8s libraries automatically.
+k8s_version="${ENVTEST_K8S_VERSION:-$(go list -m k8s.io/api | sed -E 's/.*v[0-9]+\.([0-9]+).*/1.\1/')}"
+bin_dir="$PWD/bin"
+mkdir -p "$bin_dir"
+export KUBEBUILDER_ASSETS="$(setup-envtest use "$k8s_version" --bin-dir "$bin_dir" -p path)"
+go test $(go list ./... | grep -v /e2e) -coverprofile cover.out
+'''
+
+[tasks.test-e2e]
+description = "Run e2e tests against a Kind cluster (Kind must be installed)"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = '''
+cluster="${KIND_CLUSTER}"
+if ! kind get clusters | grep -qx "$cluster"; then
+  echo "Creating Kind cluster '$cluster'..."
+  kind create cluster --name "$cluster"
+fi
+trap 'kind delete cluster --name "$cluster"' EXIT
+KIND=kind KIND_CLUSTER="$cluster" go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+'''
+
+##@ Build
+
+[tasks.build]
+description = "Build manager binary"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = "go build -o bin/manager cmd/main.go"
+
+[tasks.run]
+description = "Run a controller from your host"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = "go run ./cmd/main.go"
+
+[tasks.docker-build]
+description = "Build docker image with the manager"
+run = "$CONTAINER_TOOL build -t $IMG ."
+
+[tasks.docker-push]
+description = "Push docker image with the manager"
+run = "$CONTAINER_TOOL push $IMG"
+
+[tasks.docker-buildx]
+description = "Build and push multi-arch docker image for the manager"
+run = '''
+platforms="${PLATFORMS:-linux/arm64,linux/amd64,linux/s390x,linux/ppc64le}"
+builder="rss2discord-operator-builder"
+sed -e '1 s/\(^FROM\)/FROM --platform=${BUILDPLATFORM}/; t' \
+    -e ' 1,// s//FROM --platform=${BUILDPLATFORM}/' Dockerfile > Dockerfile.cross
+trap 'rm -f Dockerfile.cross; $CONTAINER_TOOL buildx rm "$builder" 2>/dev/null || true' EXIT
+$CONTAINER_TOOL buildx create --name "$builder" 2>/dev/null || true
+$CONTAINER_TOOL buildx use "$builder"
+$CONTAINER_TOOL buildx build --push --platform="$platforms" --tag "$IMG" -f Dockerfile.cross .
+'''
+
+[tasks.build-installer]
+description = "Generate a consolidated YAML with CRDs and deployment"
+depends = ["manifests", "generate"]
+run = '''
+mkdir -p dist
+(cd config/manager && kustomize edit set image controller="$IMG")
+kustomize build config/default > dist/install.yaml
+'''
+
+##@ Deployment
+
+[tasks.install]
+description = "Install CRDs into the K8s cluster from ~/.kube/config"
+depends = ["manifests"]
+run = '''
+out="$(kustomize build config/crd 2>/dev/null || true)"
+if [ -n "$out" ]; then echo "$out" | kubectl apply -f -; else echo "No CRDs to install; skipping."; fi
+'''
+
+[tasks.uninstall]
+description = "Uninstall CRDs from the K8s cluster from ~/.kube/config"
+depends = ["manifests"]
+run = '''
+out="$(kustomize build config/crd 2>/dev/null || true)"
+if [ -n "$out" ]; then echo "$out" | kubectl delete --ignore-not-found=${ignore-not-found:-false} -f -; else echo "No CRDs to delete; skipping."; fi
+'''
+
+[tasks.deploy]
+description = "Deploy controller to the K8s cluster from ~/.kube/config"
+depends = ["manifests"]
+run = '''
+(cd config/manager && kustomize edit set image controller="$IMG")
+kustomize build config/default | kubectl apply -f -
+'''
+
+[tasks.undeploy]
+description = "Undeploy controller from the K8s cluster from ~/.kube/config"
+run = "kustomize build config/default | kubectl delete --ignore-not-found=${ignore-not-found:-false} -f -"
+
+##@ Helm Deployment
+
+[tasks.helm-deploy]
+description = "Deploy manager to the K8s cluster via Helm. Specify an image with IMG"
+run = '''
+helm upgrade --install "${HELM_RELEASE:-rss2discord-operator}" "${HELM_CHART_DIR:-dist/chart}" \
+  --namespace "${HELM_NAMESPACE:-rss2discord-operator-system}" \
+  --create-namespace \
+  --set manager.image.repository="${IMG%:*}" \
+  --set manager.image.tag="${IMG##*:}" \
+  --wait --timeout 5m ${HELM_EXTRA_ARGS:-}
+'''
+
+[tasks.helm-uninstall]
+description = "Uninstall the Helm release from the K8s cluster"
+run = 'helm uninstall "${HELM_RELEASE:-rss2discord-operator}" --namespace "${HELM_NAMESPACE:-rss2discord-operator-system}"'
+
+[tasks.helm-status]
+description = "Show Helm release status"
+run = 'helm status "${HELM_RELEASE:-rss2discord-operator}" --namespace "${HELM_NAMESPACE:-rss2discord-operator-system}"'
+
+[tasks.helm-history]
+description = "Show Helm release history"
+run = 'helm history "${HELM_RELEASE:-rss2discord-operator}" --namespace "${HELM_NAMESPACE:-rss2discord-operator-system}"'
+
+[tasks.helm-rollback]
+description = "Rollback to previous Helm release"
+run = 'helm rollback "${HELM_RELEASE:-rss2discord-operator}" --namespace "${HELM_NAMESPACE:-rss2discord-operator-system}"'

@@ -25,16 +25,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      - name: Setup Mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
-          go-version-file: go.mod
+          install_args: --locked
 
-      - name: Cache local tool binaries
+      - name: Cache Go modules and build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: bin
-          key: ${{ runner.os }}-tools-${{ hashFiles('Makefile') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
 
       - name: Check go.mod tidiness
         run: |
@@ -42,7 +45,7 @@ jobs:
           git diff --exit-code go.mod go.sum
 
       - name: Running Tests
-        run: make test
+        run: mise run test
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0

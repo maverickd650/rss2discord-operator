@@ -39,9 +39,9 @@ kubectl apply -f dist/install.yaml
 ### Make
 
 ```bash
-IMG=my-registry/rss2discord-operator:v0.1.0 make deploy
+IMG=my-registry/rss2discord-operator:v0.1.0 mise run deploy
 # or
-IMG=my-registry/rss2discord-operator:v0.1.0 make helm-deploy
+IMG=my-registry/rss2discord-operator:v0.1.0 mise run helm-deploy
 ```
 
 ## Usage
@@ -173,29 +173,35 @@ If `discordWebhookSecretRef` points at a webhook created for a forum channel, se
 
 ## Development
 
-Requires Go 1.23+, Make, and Docker.
+Tooling is managed by [mise](https://mise.jdx.dev) — it pins every tool version (Go, golangci-lint, controller-gen, kustomize, helm, kind, etc.) in [`.mise/config.toml`](.mise/config.toml), so local development matches CI exactly. Docker is the only host prerequisite.
 
 ```bash
-make build       # build the manager binary
-make test        # unit tests
-make lint        # lint
-make lint-fix    # lint with autofix
-make test-e2e    # e2e tests, needs a Kind cluster
+curl https://mise.run | sh   # one-time: install mise
+mise install                 # install the pinned toolchain
+mise tasks                   # list available tasks
+```
+
+```bash
+mise run build       # build the manager binary
+mise run test        # unit tests
+mise run lint        # lint
+mise run lint-fix    # lint with autofix
+mise run test-e2e    # e2e tests, needs a Kind cluster
 ```
 
 After changing CRD types or RBAC markers:
 
 ```bash
-make manifests   # regenerate CRDs and RBAC
-make generate    # regenerate DeepCopy methods
+mise run manifests   # regenerate CRDs and RBAC
+mise run generate    # regenerate DeepCopy methods
 ```
 
 Build and push an image:
 
 ```bash
 export IMG=my-registry/rss2discord-operator:v0.1.0
-make docker-build
-make docker-push
+mise run docker-build
+mise run docker-push
 ```
 
 ## Project layout

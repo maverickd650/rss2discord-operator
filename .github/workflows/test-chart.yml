@@ -11,13 +11,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  KIND_VERSION: v0.32.0
-
 permissions: {}
 
 jobs:
-  test-e2e:
+  test-chart:
     permissions:
       contents: read
     name: Run on Ubuntu
@@ -30,43 +27,31 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      - name: Setup Mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
-          go-version-file: go.mod
+          install_args: --locked
 
-      - name: Cache kind binary
-        id: cache-kind
+      - name: Cache Go modules and build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: /usr/local/bin/kind
-          key: ${{ runner.os }}-kind-${{ env.KIND_VERSION }}
-
-      - name: Install kind
-        if: steps.cache-kind.outputs.cache-hit != 'true'
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-$(go env GOARCH)
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-      - name: Verify kind installation
-        run: kind version
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
 
       - name: Create kind cluster
         run: kind create cluster
 
-      - name: Prepare rss2discord-operator
+      - name: Build and load image
         run: |
           go mod tidy
-          make docker-build
-          kind load docker-image $IMG
+          mise run docker-build
+          kind load docker-image "${IMG}"
 
-      - name: Install Helm
-        run: make install-helm
-
-      - name: Lint Helm Chart
-        run: |
-          helm lint ./dist/chart
+      - name: Lint Helm chart
+        run: helm lint ./dist/chart
 
 # TODO: Uncomment if cert-manager is enabled
 #      - name: Install cert-manager via Helm (wait for readiness)
@@ -88,9 +73,7 @@ jobs:
 #          helm install prometheus-crds prometheus-community/prometheus-operator-crds
 
       - name: Deploy manager via Helm
-        run: |
-          make helm-deploy
+        run: mise run helm-deploy
 
       - name: Check Helm release status
-        run: |
-          make helm-status
+        run: mise run helm-status
