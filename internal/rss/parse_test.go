@@ -258,6 +258,91 @@ func TestParseFeed_InvalidXML(t *testing.T) {
 	}
 }
 
+func TestParseFeed_RSSAuthorAndCategories(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<rss><channel>
+<item>
+  <title>WithAuthor</title>
+  <author>jane@example.com (Jane Doe)</author>
+  <category>Go</category>
+  <category>  </category>
+  <category>Kubernetes</category>
+</item>
+<item>
+  <title>WithCreator</title>
+  <creator>Dublin Core Jane</creator>
+</item>
+</channel></rss>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	if entries[0].Author != "jane@example.com (Jane Doe)" {
+		t.Fatalf("unexpected author: %q", entries[0].Author)
+	}
+	if want := []string{"Go", "Kubernetes"}; !slicesEqual(entries[0].Categories, want) {
+		t.Fatalf("unexpected categories: %v, want %v", entries[0].Categories, want)
+	}
+
+	// No <author>, so <creator> (Dublin Core's de facto author field) is used.
+	if entries[1].Author != "Dublin Core Jane" {
+		t.Fatalf("expected creator fallback for author, got %q", entries[1].Author)
+	}
+}
+
+func TestParseFeed_AtomAuthorAndCategories(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry>
+<id>1</id>
+<title>Atom With Author</title>
+<author><name>John Smith</name></author>
+<category term="golang" />
+<category term="" />
+<category term="kubernetes" />
+</entry>
+</feed>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+
+	if entries[0].Author != "John Smith" {
+		t.Fatalf("unexpected author: %q", entries[0].Author)
+	}
+	if want := []string{"golang", "kubernetes"}; !slicesEqual(entries[0].Categories, want) {
+		t.Fatalf("unexpected categories: %v, want %v", entries[0].Categories, want)
+	}
+}
+
+func TestTrimCategories(t *testing.T) {
+	got := trimCategories([]string{"  a  ", "", "b", "   "})
+	if want := []string{"a", "b"}; !slicesEqual(got, want) {
+		t.Fatalf("trimCategories() = %v, want %v", got, want)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestParseFeed_UnknownRootFallsBackToAtom(t *testing.T) {
 	// Root element is neither <rss> nor <feed>; parseRSS yields no items
 	// without error, so an Atom-shaped document under an odd root still

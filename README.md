@@ -165,7 +165,7 @@ Default (used only when `embed.enabled` is false):
 [Read more]({{.Link}})
 ```
 
-Available fields: `.Title`, `.Description`, `.Link`, `.Published`.
+Available fields: `.Title`, `.Description`, `.Link`, `.Published`, `.Author`, `.Categories` (comma-separated).
 
 ### Forum channels
 
