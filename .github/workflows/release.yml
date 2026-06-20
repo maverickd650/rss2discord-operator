@@ -11,9 +11,10 @@ permissions: {}
 
 jobs:
   release-please:
+    name: Release Please
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write # to create release commits/tags
+      pull-requests: write # to open/update the release PR
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -28,13 +29,14 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   publish:
+    name: Publish
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # to checkout the tagged release
+      packages: write # to push image/chart to GHCR
+      id-token: write # for keyless cosign signing
     env:
       VERSION: ${{ needs.release-please.outputs.version }}
       IMAGE: ghcr.io/${{ github.repository }}
@@ -50,6 +52,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           install_args: --locked
+          cache: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
@@ -86,13 +89,18 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - name: Log in to GHCR for Helm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
-            --username "${{ github.actor }}" --password-stdin
+          echo "${GITHUB_TOKEN}" | helm registry login ghcr.io \
+            --username "${ACTOR}" --password-stdin
 
       - name: Package Helm chart
         run: |
@@ -109,5 +117,7 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Sign Helm chart (keyless)
+        env:
+          DIGEST: ${{ steps.chart_push.outputs.digest }}
         run: |
-          cosign sign --yes "${CHART_REPO#oci://}/rss2discord-operator@${{ steps.chart_push.outputs.digest }}"
+          cosign sign --yes "${CHART_REPO#oci://}/rss2discord-operator@${DIGEST}"
