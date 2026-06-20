@@ -131,6 +131,8 @@ type MockDiscordServer struct {
 	server           *httptest.Server
 	messagesReceived int
 	bodiesReceived   []string
+	failNext         int
+	failStatus       int
 }
 
 // NewMockDiscordServer creates a new mock Discord server. It uses TLS and
@@ -143,19 +145,33 @@ func NewMockDiscordServer() *MockDiscordServer {
 	}
 
 	d.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			body, _ := io.ReadAll(r.Body)
-			d.messagesReceived++
-			d.bodiesReceived = append(d.bodiesReceived, string(body))
-			w.WriteHeader(http.StatusNoContent)
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
+
+		if d.failNext > 0 {
+			d.failNext--
+			w.WriteHeader(d.failStatus)
+			return
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		d.messagesReceived++
+		d.bodiesReceived = append(d.bodiesReceived, string(body))
+		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	discord.AllowedWebhookHosts[d.server.Listener.Addr().(*net.TCPAddr).IP.String()] = true
 
 	return d
+}
+
+// FailNextRequests makes the next n webhook deliveries fail with statusCode
+// instead of succeeding, so tests can exercise send-failure/retry paths.
+func (d *MockDiscordServer) FailNextRequests(n int, statusCode int) {
+	d.failNext = n
+	d.failStatus = statusCode
 }
 
 // Bodies returns the raw request bodies received so far, in arrival order.
@@ -444,6 +460,106 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).To(Equal(lastSeenAfterFirst))
 			Expect(afterSecond.Status.LastError).To(BeEmpty())
 			Expect(afterSecond.Status.RetryCount[rssServer.URL()]).To(Equal(0))
+		})
+	})
+
+	Describe("Conditional GET validators after a send failure", func() {
+		It("should not persist the new ETag until the entry is actually sent", func() {
+			const feedGroupName = "test-feedgroup-conditional-get-retry"
+
+			By("Creating mock Discord webhook server that fails the first delivery")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+			discordServer.FailNextRequests(1, http.StatusInternalServerError)
+
+			By("Creating a mock RSS feed server that returns an ETag")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Retry Article",
+					description: "Should survive a failed send",
+					link:        "https://example.com/retry-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "retry-article",
+				},
+			))
+			rssServer.SetETag(`"v1"`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-conditional-retry",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-conditional-retry"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running the first reconciliation, where the Discord send fails")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discordServer.MessageCount()).To(Equal(0))
+
+			By("Verifying the new ETag was NOT persisted, since the entry was never sent")
+			afterFirst := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirst)).To(Succeed())
+			Expect(afterFirst.Status.FeedETag).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterFirst.Status.LastSeenEntry).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterFirst.Status.LastError).To(HaveKey(rssServer.URL()))
+
+			By("Running a second reconciliation, where the Discord send succeeds")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the previously unsent entry was retried and delivered")
+			Expect(discordServer.MessageCount()).To(Equal(1))
+			Expect(rssServer.IfNoneMatchSeen()[1]).To(BeEmpty(), "second fetch should not have sent the never-persisted ETag")
+
+			afterSecond := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
+			Expect(afterSecond.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
+			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).NotTo(BeEmpty())
+			Expect(afterSecond.Status.LastError).To(BeEmpty())
 		})
 	})
 
@@ -1132,6 +1248,110 @@ var _ = Describe("FeedGroup Controller", func() {
 			// Should be a valid RFC3339 timestamp
 			_, err = time.Parse(time.RFC3339, updated.Status.LastChecked[rssServer.URL()])
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("Status pruning for removed feeds", func() {
+		It("should drop per-feed status entries once a feed is removed from spec", func() {
+			const feedGroupName = "test-feedgroup-removed-feed"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Soon Removed",
+					description: "This feed will be removed from spec",
+					link:        "https://example.com/removed",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "removed-1",
+				},
+			))
+			rssServer.SetETag(`"v1"`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-removed",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			const keptFeedURL = "https://example.com/kept-feed.xml"
+
+			By("Creating FeedGroup resource with two feeds")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-removed"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+						{RSSUrl: keptFeedURL, Paused: true},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running the first reconciliation so the removed feed accrues status")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			afterFirst := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirst)).To(Succeed())
+			Expect(afterFirst.Status.LastChecked).To(HaveKey(rssServer.URL()))
+			Expect(afterFirst.Status.FeedETag).To(HaveKey(rssServer.URL()))
+
+			By("Removing the feed from spec, keeping the paused one")
+			afterFirst.Spec.Feeds = []rss2discordv1alpha1.FeedSpec{
+				{RSSUrl: keptFeedURL, Paused: true},
+			}
+			Expect(k8sClient.Update(ctx, afterFirst)).To(Succeed())
+
+			By("Running another reconciliation")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the removed feed's status entries were pruned")
+			afterSecond := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
+			Expect(afterSecond.Status.LastChecked).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterSecond.Status.LastSeenEntry).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterSecond.Status.LastSent).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterSecond.Status.FeedETag).NotTo(HaveKey(rssServer.URL()))
+			Expect(afterSecond.Status.FeedLastModified).NotTo(HaveKey(rssServer.URL()))
 		})
 	})
 
