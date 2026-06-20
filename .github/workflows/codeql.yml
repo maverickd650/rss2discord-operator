@@ -32,7 +32,8 @@ jobs:
       - name: Setup Mise
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
-          # Only the Go toolchain is needed to build for analysis.
+          # Provide the Go toolchain so the extractor can resolve dependency
+          # types. Only `go` is needed; skip the rest of the tool set.
           install_args: go
           cache: false
 
@@ -40,13 +41,11 @@ jobs:
         uses: github/codeql-action/init@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
         with:
           languages: go
-          build-mode: manual
+          # `none` extracts directly from source without tracing a build. Manual
+          # mode fails here because mise installs `go` as a PATH shim, which
+          # CodeQL's build tracer can't follow ("no source code seen").
+          build-mode: none
           queries: security-and-quality
-
-      # DeepCopy methods are committed (api/v1alpha1/zz_generated.deepcopy.go),
-      # so a plain `go build` compiles the whole module without controller-gen.
-      - name: Build
-        run: go build ./...
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
