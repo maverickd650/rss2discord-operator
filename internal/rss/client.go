@@ -28,6 +28,7 @@ type Entry struct {
 	Title       string
 	Link        string
 	Description string
+	Image       string
 	Published   time.Time
 }
 
@@ -142,25 +143,95 @@ type rssChannel struct {
 }
 
 type rssItem struct {
-	Title       string `xml:"title"`
-	Link        string `xml:"link"`
-	Description string `xml:"description"`
-	GUID        string `xml:"guid"`
-	PubDate     string `xml:"pubDate"`
+	Title          string        `xml:"title"`
+	Link           string        `xml:"link"`
+	Description    string        `xml:"description"`
+	GUID           string        `xml:"guid"`
+	PubDate        string        `xml:"pubDate"`
+	Enclosure      *rssEnclosure `xml:"enclosure"`
+	MediaThumbnail *rssMediaURL  `xml:"thumbnail"`
+	MediaContent   []rssMediaURL `xml:"content"`
+}
+
+// rssEnclosure is RSS's standard <enclosure url=".." type="image/..">,
+// commonly used to attach a lead image to an item.
+type rssEnclosure struct {
+	URL  string `xml:"url,attr"`
+	Type string `xml:"type,attr"`
+}
+
+// rssMediaURL covers the Media RSS namespace's <media:thumbnail> and
+// <media:content>, both of which carry a url attribute and (for content)
+// optional medium/type attributes identifying it as an image. encoding/xml
+// matches by local name regardless of namespace prefix, so this also
+// matches Atom's namespaced equivalents if a feed mixes vocabularies.
+type rssMediaURL struct {
+	URL    string `xml:"url,attr"`
+	Medium string `xml:"medium,attr"`
+	Type   string `xml:"type,attr"`
+}
+
+func (m rssMediaURL) isImage() bool {
+	return strings.HasPrefix(m.Medium, "image") || strings.HasPrefix(m.Type, "image/")
+}
+
+// entryImage picks the first available image source from an RSS item's
+// enclosure or Media RSS thumbnail/content elements.
+func entryImage(enclosure *rssEnclosure, thumbnail *rssMediaURL, content []rssMediaURL) string {
+	if enclosure != nil && strings.HasPrefix(enclosure.Type, "image/") && enclosure.URL != "" {
+		return enclosure.URL
+	}
+	if thumbnail != nil && thumbnail.URL != "" {
+		return thumbnail.URL
+	}
+	for _, c := range content {
+		if c.isImage() && c.URL != "" {
+			return c.URL
+		}
+	}
+	return ""
 }
 
 type atomEntry struct {
-	ID        string   `xml:"id"`
-	Title     string   `xml:"title"`
-	Link      atomLink `xml:"link"`
-	Summary   string   `xml:"summary"`
-	Content   string   `xml:"content"`
-	Updated   string   `xml:"updated"`
-	Published string   `xml:"published"`
+	ID        string     `xml:"id"`
+	Title     string     `xml:"title"`
+	Links     []atomLink `xml:"link"`
+	Summary   string     `xml:"summary"`
+	Content   string     `xml:"content"`
+	Updated   string     `xml:"updated"`
+	Published string     `xml:"published"`
 }
 
 type atomLink struct {
 	Href string `xml:"href,attr"`
+	Rel  string `xml:"rel,attr"`
+	Type string `xml:"type,attr"`
+}
+
+// primaryLink returns the entry's main article link: the "alternate" rel,
+// or the first link if none is explicitly marked alternate (Atom defaults
+// an unmarked link's rel to "alternate").
+func primaryLink(links []atomLink) string {
+	for _, l := range links {
+		if l.Rel == "" || l.Rel == "alternate" {
+			return l.Href
+		}
+	}
+	if len(links) > 0 {
+		return links[0].Href
+	}
+	return ""
+}
+
+// enclosureImage returns an Atom entry's image enclosure link, if any
+// (<link rel="enclosure" type="image/..">).
+func enclosureImage(links []atomLink) string {
+	for _, l := range links {
+		if l.Rel == "enclosure" && strings.HasPrefix(l.Type, "image/") {
+			return l.Href
+		}
+	}
+	return ""
 }
 
 type atomFeed struct {
@@ -212,6 +283,7 @@ func parseRSS(data []byte) ([]Entry, error) {
 			Title:       strings.TrimSpace(item.Title),
 			Link:        strings.TrimSpace(item.Link),
 			Description: strings.TrimSpace(item.Description),
+			Image:       strings.TrimSpace(entryImage(item.Enclosure, item.MediaThumbnail, item.MediaContent)),
 			Published:   published,
 		})
 	}
@@ -232,9 +304,11 @@ func parseAtom(data []byte) ([]Entry, error) {
 			published, _ = parseTime(item.Updated)
 		}
 
+		link := primaryLink(item.Links)
+
 		id := strings.TrimSpace(item.ID)
 		if id == "" {
-			id = strings.TrimSpace(item.Link.Href)
+			id = strings.TrimSpace(link)
 		}
 		if id == "" {
 			id = strings.TrimSpace(item.Title)
@@ -248,8 +322,9 @@ func parseAtom(data []byte) ([]Entry, error) {
 		entries = append(entries, Entry{
 			ID:          id,
 			Title:       strings.TrimSpace(item.Title),
-			Link:        strings.TrimSpace(item.Link.Href),
+			Link:        strings.TrimSpace(link),
 			Description: description,
+			Image:       strings.TrimSpace(enclosureImage(item.Links)),
 			Published:   published,
 		})
 	}

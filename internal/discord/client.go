@@ -48,8 +48,76 @@ func NewHTTPClient() *http.Client {
 	return &http.Client{Timeout: defaultTimeout}
 }
 
+// Embed describes a Discord embed ("bubble") to attach to a webhook message,
+// matching the subset of Discord's embed object that feeds need: a colored
+// side bar, optional thumbnail/image, author line, and footer.
+type Embed struct {
+	Title       string
+	Description string
+	URL         string
+	// Color is a 24-bit RGB integer (0xRRGGBB), as used by Discord's API.
+	Color        int
+	Timestamp    string
+	ImageURL     string
+	ThumbnailURL string
+	AuthorName   string
+	FooterText   string
+}
+
+// Message is a single Discord webhook delivery. Content is sent as a plain
+// message; Embed, if set, renders as a colored bubble alongside it. Setting
+// ThreadName posts the message as a new thread in a forum channel; ThreadID
+// posts into an existing thread/forum post instead.
+type Message struct {
+	Content    string
+	Embed      *Embed
+	ThreadName string
+	ThreadID   string
+	Username   string
+	AvatarURL  string
+}
+
 type discordPayload struct {
-	Content string `json:"content"`
+	Content         string                 `json:"content,omitempty"`
+	Embeds          []discordEmbed         `json:"embeds,omitempty"`
+	ThreadName      string                 `json:"thread_name,omitempty"`
+	Username        string                 `json:"username,omitempty"`
+	AvatarURL       string                 `json:"avatar_url,omitempty"`
+	AllowedMentions discordAllowedMentions `json:"allowed_mentions"`
+}
+
+// discordAllowedMentions with an empty Parse list suppresses all @everyone,
+// @here, role, and user mentions. Feed entry titles/descriptions are
+// untrusted external text that ends up in the plain-content path, so
+// without this a feed containing "@everyone" would actually ping the
+// channel. Embeds are unaffected either way: Discord never parses mentions
+// out of embed fields.
+type discordAllowedMentions struct {
+	Parse []string `json:"parse"`
+}
+
+type discordEmbed struct {
+	Title       string              `json:"title,omitempty"`
+	Description string              `json:"description,omitempty"`
+	URL         string              `json:"url,omitempty"`
+	Color       int                 `json:"color,omitempty"`
+	Timestamp   string              `json:"timestamp,omitempty"`
+	Image       *discordEmbedMedia  `json:"image,omitempty"`
+	Thumbnail   *discordEmbedMedia  `json:"thumbnail,omitempty"`
+	Author      *discordEmbedAuthor `json:"author,omitempty"`
+	Footer      *discordEmbedFooter `json:"footer,omitempty"`
+}
+
+type discordEmbedMedia struct {
+	URL string `json:"url"`
+}
+
+type discordEmbedAuthor struct {
+	Name string `json:"name"`
+}
+
+type discordEmbedFooter struct {
+	Text string `json:"text"`
 }
 
 // RateLimitError indicates Discord responded with HTTP 429 and how long the
@@ -79,11 +147,14 @@ func parseRetryAfter(value string) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func (c *Client) SendMessage(ctx context.Context, content string) error {
+// SendMessage delivers msg to the webhook. Either Content or Embed (or both)
+// must be set. SendMessageText is a convenience wrapper for the common
+// plain-content-only case.
+func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	if strings.TrimSpace(c.webhookURL) == "" {
 		return fmt.Errorf("discord webhook URL is empty")
 	}
-	if strings.TrimSpace(content) == "" {
+	if strings.TrimSpace(msg.Content) == "" && msg.Embed == nil {
 		return fmt.Errorf("discord message content is empty")
 	}
 
@@ -95,13 +166,29 @@ func (c *Client) SendMessage(ctx context.Context, content string) error {
 		return fmt.Errorf("discord webhook URL must be an https://discord.com or https://discordapp.com URL")
 	}
 
-	payload := discordPayload{Content: content}
+	if strings.TrimSpace(msg.ThreadID) != "" {
+		query := parsedURL.Query()
+		query.Set("thread_id", msg.ThreadID)
+		parsedURL.RawQuery = query.Encode()
+	}
+
+	payload := discordPayload{
+		Content:         msg.Content,
+		ThreadName:      msg.ThreadName,
+		Username:        msg.Username,
+		AvatarURL:       msg.AvatarURL,
+		AllowedMentions: discordAllowedMentions{Parse: []string{}},
+	}
+	if msg.Embed != nil {
+		payload.Embeds = []discordEmbed{embedToPayload(*msg.Embed)}
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.webhookURL, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, parsedURL.String(), strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}
@@ -125,4 +212,72 @@ func (c *Client) SendMessage(ctx context.Context, content string) error {
 	}
 
 	return nil
+}
+
+// SendMessageText is a convenience wrapper around SendMessage for plain,
+// embed-less content.
+func (c *Client) SendMessageText(ctx context.Context, content string) error {
+	return c.SendMessage(ctx, Message{Content: content})
+}
+
+// maxEmbedTotalLength is Discord's cap on the combined character count of
+// title + description + footer.text + author.name (+ field name/value, which
+// this package doesn't use) across all embeds in a single message. Discord
+// rejects the whole webhook call with a 400 if exceeded, even though each
+// field individually stays under its own per-field limit.
+const maxEmbedTotalLength = 6000
+
+func embedToPayload(e Embed) discordEmbed {
+	e = clampEmbedTotalLength(e)
+	payload := discordEmbed{
+		Title:       e.Title,
+		Description: e.Description,
+		URL:         e.URL,
+		Color:       e.Color,
+		Timestamp:   e.Timestamp,
+	}
+	if e.ImageURL != "" {
+		payload.Image = &discordEmbedMedia{URL: e.ImageURL}
+	}
+	if e.ThumbnailURL != "" {
+		payload.Thumbnail = &discordEmbedMedia{URL: e.ThumbnailURL}
+	}
+	if e.AuthorName != "" {
+		payload.Author = &discordEmbedAuthor{Name: e.AuthorName}
+	}
+	if e.FooterText != "" {
+		payload.Footer = &discordEmbedFooter{Text: e.FooterText}
+	}
+	return payload
+}
+
+// clampEmbedTotalLength shrinks Description, the field with the most slack,
+// until title+description+footer+author fits within maxEmbedTotalLength.
+// Title/footer/author come from feed config and entry titles, which are
+// short in practice, so trimming the (often long) description is the least
+// surprising way to enforce the limit.
+func clampEmbedTotalLength(e Embed) Embed {
+	total := len([]rune(e.Title)) + len([]rune(e.Description)) + len([]rune(e.FooterText)) + len([]rune(e.AuthorName))
+	if total <= maxEmbedTotalLength {
+		return e
+	}
+
+	overflow := total - maxEmbedTotalLength
+	descRunes := []rune(e.Description)
+	newLen := max(len(descRunes)-overflow, 0)
+	e.Description = truncateRunes(descRunes, newLen)
+	return e
+}
+
+// truncateRunes trims runes to at most max, appending an ellipsis in place
+// of the last truncated rune when anything was actually cut.
+func truncateRunes(runes []rune, max int) string {
+	if len(runes) <= max {
+		return string(runes)
+	}
+	if max <= 0 {
+		return ""
+	}
+	const ellipsis = "…"
+	return string(runes[:max-len([]rune(ellipsis))]) + ellipsis
 }

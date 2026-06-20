@@ -61,6 +61,65 @@ func TestFetchEntries_ParsesValidRSS(t *testing.T) {
 	}
 }
 
+func TestParseFeed_ExtractsRSSEnclosureImage(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<rss><channel>
+<item><title>Hello</title><link>http://example.com/1</link><description>World</description><guid>1</guid>
+<enclosure url="http://example.com/pic.jpg" type="image/jpeg" /></item>
+</channel></rss>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Image != "http://example.com/pic.jpg" {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestParseFeed_ExtractsMediaThumbnailImage(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<rss xmlns:media="http://search.yahoo.com/mrss/"><channel>
+<item><title>Hello</title><link>http://example.com/1</link><description>World</description><guid>1</guid>
+<media:thumbnail url="http://example.com/thumb.jpg" /></item>
+</channel></rss>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Image != "http://example.com/thumb.jpg" {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestParseFeed_ExtractsAtomEnclosureImage(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry>
+<id>1</id>
+<title>Hello</title>
+<link rel="alternate" href="http://example.com/1" />
+<link rel="enclosure" href="http://example.com/pic.jpg" type="image/jpeg" />
+<summary>World</summary>
+</entry>
+</feed>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+	if entries[0].Link != "http://example.com/1" {
+		t.Fatalf("unexpected link: %q", entries[0].Link)
+	}
+	if entries[0].Image != "http://example.com/pic.jpg" {
+		t.Fatalf("unexpected image: %q", entries[0].Image)
+	}
+}
+
 func TestFetchEntries_RespectsTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)

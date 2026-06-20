@@ -34,6 +34,37 @@ type Filter struct {
 	Keywords []string `json:"keywords,omitempty"`
 }
 
+// EmbedSpec configures Discord's native embed rendering (the colored
+// "bubble" with title, description, thumbnail, author and footer) instead
+// of a plain text message.
+type EmbedSpec struct {
+	// Enabled switches a feed's messages from plain text content to a
+	// Discord embed.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Color is the embed's side-bar color, as a hex string (e.g. "#5865F2"
+	// or "5865F2").
+	// +kubebuilder:validation:Pattern=`^#?[0-9a-fA-F]{6}$`
+	// +optional
+	Color string `json:"color,omitempty"`
+
+	// DescriptionFormat is the template used to render the embed's
+	// description. Supports the same placeholders as Format. Defaults to
+	// "{{.Description}}".
+	// +optional
+	DescriptionFormat string `json:"descriptionFormat,omitempty"`
+
+	// AuthorName is shown on the embed's author line.
+	// +optional
+	AuthorName string `json:"authorName,omitempty"`
+
+	// FooterText is shown in the embed's footer.
+	// +optional
+	FooterText string `json:"footerText,omitempty"`
+}
+
 // FeedSpec defines the configuration for a single RSS feed.
 type FeedSpec struct {
 	// RSSUrl is the URL of the RSS feed to fetch. Only http:// and https:// are supported.
@@ -48,6 +79,23 @@ type FeedSpec struct {
 	// Overrides the group-level format if set.
 	// +optional
 	Format string `json:"format,omitempty"`
+
+	// Embed configures Discord embed rendering for this feed. Overrides the
+	// group-level Embed config if set.
+	// +optional
+	Embed *EmbedSpec `json:"embed,omitempty"`
+
+	// ForumThreadName creates a new forum post for each message, named from
+	// this template, when DiscordWebhookSecretRef points at a forum
+	// channel's webhook. Supports the same placeholders as Format. Leave
+	// unset for regular text channels.
+	// +optional
+	ForumThreadName string `json:"forumThreadName,omitempty"`
+
+	// ForumThreadID posts messages into an existing forum thread/post
+	// instead of creating a new one. Takes precedence over ForumThreadName.
+	// +optional
+	ForumThreadID string `json:"forumThreadID,omitempty"`
 
 	// Paused stops processing this feed if set to true.
 	// +optional
@@ -70,6 +118,21 @@ type FeedGroupSpec struct {
 	// +kubebuilder:default="**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
 	// +optional
 	Format string `json:"format,omitempty"`
+
+	// Embed configures Discord embed rendering, used as the default for all
+	// feeds in this group unless a feed sets its own Embed.
+	// +optional
+	Embed *EmbedSpec `json:"embed,omitempty"`
+
+	// Username overrides the webhook's default display name for messages
+	// sent from this group.
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// AvatarURL overrides the webhook's default avatar for messages sent
+	// from this group.
+	// +optional
+	AvatarURL string `json:"avatarURL,omitempty"`
 
 	// Retries is the number of times to retry failed operations (fetch/send).
 	// +kubebuilder:default=3

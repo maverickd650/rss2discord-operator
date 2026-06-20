@@ -10,6 +10,9 @@ A Kubernetes operator that watches RSS feeds and posts new entries to Discord vi
 - Post updates to Discord webhooks
 - Filter entries by regex or keywords
 - Customize the message format per feed group or per feed
+- Render entries as native Discord embeds (colored bubble, thumbnail, author/footer) instead of plain text
+- Post into forum channels, either as a new thread per entry or into an existing thread
+- Override the webhook's display name/avatar per feed group
 - Configurable check interval and retry behavior
 
 ## Installing
@@ -77,6 +80,19 @@ spec:
       paused: false
 ```
 
+To render entries as embeds (with a colored bubble and thumbnail) instead of plain text, and to post each entry as a new forum thread:
+
+```yaml
+spec:
+  embed:
+    enabled: true
+    color: "#5865F2"
+    footerText: "via tech-news"
+  feeds:
+    - rssUrl: "https://news.ycombinator.com/rss"
+      forumThreadName: "{{.Title}}"
+```
+
 ```bash
 kubectl apply -f feedgroup.yaml
 ```
@@ -97,7 +113,10 @@ kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-cont
 | `interval` | `string` | `30m` | How often to check feeds |
 | `retries` | `int` | `3` | Retries for failed operations |
 | `retryInterval` | `string` | `5m` | Delay between retries |
-| `format` | `string` | see below | Discord message template |
+| `format` | `string` | see below | Discord message template (used when `embed` is not enabled) |
+| `embed` | `*Embed` | optional | Default embed config for all feeds in the group |
+| `username` | `string` | optional | Overrides the webhook's display name (Discord rejects names containing "clyde" or "discord", or over 80 characters) |
+| `avatarURL` | `string` | optional | Overrides the webhook's avatar |
 | `feeds` | `[]Feed` | required | RSS feeds to monitor |
 
 ### Feed
@@ -107,6 +126,9 @@ kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-cont
 | `rssUrl` | `string` | required | RSS feed URL |
 | `filter` | `*Filter` | optional | Filter rules for entries |
 | `format` | `string` | optional | Overrides the group's format for this feed |
+| `embed` | `*Embed` | optional | Overrides the group's embed config for this feed |
+| `forumThreadName` | `string` | optional | Template for a new forum post's title; set on FeedGroups whose webhook targets a forum channel |
+| `forumThreadID` | `string` | optional | Posts into an existing forum thread instead of creating a new one (takes precedence over `forumThreadName`) |
 | `paused` | `bool` | `false` | Stop processing this feed without removing it |
 
 ### Filter
@@ -116,9 +138,23 @@ kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-cont
 | `regex` | `string` | Regex matched against title/description |
 | `keywords` | `[]string` | Keywords matched against title/description (OR) |
 
+### Embed
+
+When `enabled`, a feed's messages are sent as a native Discord embed (the colored bubble UI) instead of plain text. The embed's title/link/timestamp come directly from the entry; only the description is templated.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `false` | Render messages as embeds instead of plain text |
+| `color` | `string` | none | Side-bar color, as hex (`#5865F2` or `5865F2`) |
+| `descriptionFormat` | `string` | `{{.Description}}` | Template for the embed description |
+| `authorName` | `string` | optional | Shown on the embed's author line |
+| `footerText` | `string` | optional | Shown in the embed's footer |
+
+If the feed entry has a lead image (an RSS `<enclosure>` or Media RSS `<media:thumbnail>`/`<media:content>`, or an Atom `<link rel="enclosure">`), it's attached automatically as the embed's thumbnail.
+
 ### Message template
 
-Default:
+Default (used only when `embed.enabled` is false):
 
 ```
 **{{.Title}}**
@@ -127,6 +163,10 @@ Default:
 ```
 
 Available fields: `.Title`, `.Description`, `.Link`, `.Published`.
+
+### Forum channels
+
+If `discordWebhookSecretRef` points at a webhook created for a forum channel, set `forumThreadName` on a feed to create a new forum post per entry (templated, same placeholders as `format`), or `forumThreadID` to post into one specific existing thread instead.
 
 ## Development
 

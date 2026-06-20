@@ -46,6 +46,11 @@ spec:
           spec:
             description: FeedGroupSpec defines the desired state of a FeedGroup.
             properties:
+              avatarURL:
+                description: |-
+                  AvatarURL overrides the webhook's default avatar for messages sent
+                  from this group.
+                type: string
               catchUpLimit:
                 default: 5
                 description: |-
@@ -80,6 +85,36 @@ spec:
                 - key
                 type: object
                 x-kubernetes-map-type: atomic
+              embed:
+                description: |-
+                  Embed configures Discord embed rendering, used as the default for all
+                  feeds in this group unless a feed sets its own Embed.
+                properties:
+                  authorName:
+                    description: AuthorName is shown on the embed's author line.
+                    type: string
+                  color:
+                    description: |-
+                      Color is the embed's side-bar color, as a hex string (e.g. "#5865F2"
+                      or "5865F2").
+                    pattern: ^#?[0-9a-fA-F]{6}$
+                    type: string
+                  descriptionFormat:
+                    description: |-
+                      DescriptionFormat is the template used to render the embed's
+                      description. Supports the same placeholders as Format. Defaults to
+                      "{{.Description}}".
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled switches a feed's messages from plain text content to a
+                      Discord embed.
+                    type: boolean
+                  footerText:
+                    description: FooterText is shown in the embed's footer.
+                    type: string
+                type: object
               feeds:
                 description: Feeds is the list of RSS feed configurations in this
                   group.
@@ -87,6 +122,36 @@ spec:
                   description: FeedSpec defines the configuration for a single RSS
                     feed.
                   properties:
+                    embed:
+                      description: |-
+                        Embed configures Discord embed rendering for this feed. Overrides the
+                        group-level Embed config if set.
+                      properties:
+                        authorName:
+                          description: AuthorName is shown on the embed's author line.
+                          type: string
+                        color:
+                          description: |-
+                            Color is the embed's side-bar color, as a hex string (e.g. "#5865F2"
+                            or "5865F2").
+                          pattern: ^#?[0-9a-fA-F]{6}$
+                          type: string
+                        descriptionFormat:
+                          description: |-
+                            DescriptionFormat is the template used to render the embed's
+                            description. Supports the same placeholders as Format. Defaults to
+                            "{{.Description}}".
+                          type: string
+                        enabled:
+                          default: false
+                          description: |-
+                            Enabled switches a feed's messages from plain text content to a
+                            Discord embed.
+                          type: boolean
+                        footerText:
+                          description: FooterText is shown in the embed's footer.
+                          type: string
+                      type: object
                     filter:
                       description: Filter defines how to filter entries from this
                         feed.
@@ -106,6 +171,18 @@ spec:
                       description: |-
                         Format is the template for Discord messages for this feed.
                         Overrides the group-level format if set.
+                      type: string
+                    forumThreadID:
+                      description: |-
+                        ForumThreadID posts messages into an existing forum thread/post
+                        instead of creating a new one. Takes precedence over ForumThreadName.
+                      type: string
+                    forumThreadName:
+                      description: |-
+                        ForumThreadName creates a new forum post for each message, named from
+                        this template, when DiscordWebhookSecretRef points at a forum
+                        channel's webhook. Supports the same placeholders as Format. Leave
+                        unset for regular text channels.
                       type: string
                     paused:
                       description: Paused stops processing this feed if set to true.
@@ -142,6 +219,11 @@ spec:
                 default: 5m
                 description: RetryInterval is the duration between retries (e.g.,
                   "5m").
+                type: string
+              username:
+                description: |-
+                  Username overrides the webhook's default display name for messages
+                  sent from this group.
                 type: string
             required:
             - discordWebhookSecretRef
