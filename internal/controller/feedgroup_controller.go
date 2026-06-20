@@ -38,7 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -72,7 +72,7 @@ type FeedGroupReconciler struct {
 	Scheme               *runtime.Scheme
 	RSSClient            *rss.Client
 	DiscordClientBuilder func(webhookURL string) *discord.Client
-	Recorder             record.EventRecorder
+	Recorder             events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=rss2discord.maverickd650.dev,resources=feedgroups,verbs=get;list;watch;create;update;patch;delete
@@ -363,7 +363,7 @@ func (r *FeedGroupReconciler) recordPersistentFailure(feedGroup *v1alpha1.FeedGr
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(feedGroup, corev1.EventTypeWarning, reason,
+	r.Recorder.Eventf(feedGroup, nil, corev1.EventTypeWarning, reason, "RetriesExhausted",
 		"feed %s: giving up after exhausting retries: %v", url, err)
 }
 
@@ -779,7 +779,7 @@ func maxRetryCount(specRetries int) int {
 // SetupWithManager sets up the controller with the Manager.
 func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("feedgroup-controller")
+		r.Recorder = mgr.GetEventRecorder("feedgroup-controller")
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.FeedGroup{}).

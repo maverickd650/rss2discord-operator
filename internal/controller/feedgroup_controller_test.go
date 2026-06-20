@@ -32,7 +32,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rss2discordv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
@@ -899,7 +899,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
-			recorder := record.NewFakeRecorder(10)
+			recorder := events.NewFakeRecorder(10)
 			reconciler := &FeedGroupReconciler{
 				Client:    k8sClient,
 				Scheme:    k8sClient.Scheme(),
