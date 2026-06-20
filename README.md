@@ -1,5 +1,7 @@
 # rss2discord-operator
 
+[![codecov](https://codecov.io/gh/maverickd650/rss2discord-operator/graph/badge.svg)](https://codecov.io/gh/maverickd650/rss2discord-operator)
+
 A Kubernetes operator that watches RSS feeds and posts new entries to Discord via webhooks. Feeds are configured declaratively with a `FeedGroup` custom resource.
 
 > **Note:** This project is vibecoded — built quickly with heavy AI assistance, not deeply hardened or extensively reviewed. It works for personal/small-scale use, but read the code before trusting it with anything important.
