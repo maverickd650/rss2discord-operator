@@ -169,6 +169,20 @@ func (in *FeedGroupStatus) DeepCopyInto(out *FeedGroupStatus) {
 			(*out)[key] = val
 		}
 	}
+	if in.FeedETag != nil {
+		in, out := &in.FeedETag, &out.FeedETag
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.FeedLastModified != nil {
+		in, out := &in.FeedLastModified, &out.FeedLastModified
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.RetryCount != nil {
 		in, out := &in.RetryCount, &out.RetryCount
 		*out = make(map[string]int, len(*in))

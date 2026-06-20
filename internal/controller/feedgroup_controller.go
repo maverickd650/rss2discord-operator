@@ -131,15 +131,21 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Feeds are independent network fetches, so fetch them concurrently
 	// rather than paying each feed's fetch timeout sequentially. Sending and
 	// status-map updates below remain single-threaded, so no locking is
-	// needed for the rest of the reconcile.
-	fetched := make([][]rss.Entry, len(activeFeeds))
+	// needed for the rest of the reconcile. Reading (not writing)
+	// feedGroup.Status here is safe concurrently with itself, since nothing
+	// mutates it until after wg.Wait().
+	fetched := make([]rss.FetchResult, len(activeFeeds))
 	fetchErrs := make([]error, len(activeFeeds))
 	var wg sync.WaitGroup
 	for i, feed := range activeFeeds {
 		wg.Add(1)
 		go func(i int, rssURL string) {
 			defer wg.Done()
-			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL)
+			validators := rss.CacheValidators{
+				ETag:         feedGroup.Status.FeedETag[rssURL],
+				LastModified: feedGroup.Status.FeedLastModified[rssURL],
+			}
+			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL, validators)
 		}(i, feed.RSSUrl)
 	}
 	wg.Wait()
@@ -178,7 +184,7 @@ func (r *FeedGroupReconciler) processFeed(
 	ctx context.Context,
 	feedGroup *v1alpha1.FeedGroup,
 	feed v1alpha1.FeedSpec,
-	entries []rss.Entry,
+	fetchResult rss.FetchResult,
 	fetchErr error,
 	discordClient *discord.Client,
 	now string,
@@ -197,6 +203,22 @@ func (r *FeedGroupReconciler) processFeed(
 		return feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries), 0
 	}
 
+	// Persist whatever validators the server returned (200 or 304) so the
+	// next reconcile's conditional GET uses the freshest ones.
+	if fetchResult.ETag != "" {
+		feedGroup.Status.FeedETag[feed.RSSUrl] = fetchResult.ETag
+	}
+	if fetchResult.LastModified != "" {
+		feedGroup.Status.FeedLastModified[feed.RSSUrl] = fetchResult.LastModified
+	}
+
+	if fetchResult.NotModified {
+		delete(feedGroup.Status.LastError, feed.RSSUrl)
+		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		return false, 0
+	}
+
+	entries := fetchResult.Entries
 	if len(entries) == 0 {
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
@@ -334,6 +356,12 @@ func (r *FeedGroupReconciler) setDefaultStatusMaps(feedGroup *v1alpha1.FeedGroup
 	}
 	if feedGroup.Status.RetryCount == nil {
 		feedGroup.Status.RetryCount = map[string]int{}
+	}
+	if feedGroup.Status.FeedETag == nil {
+		feedGroup.Status.FeedETag = map[string]string{}
+	}
+	if feedGroup.Status.FeedLastModified == nil {
+		feedGroup.Status.FeedLastModified = map[string]string{}
 	}
 }
 

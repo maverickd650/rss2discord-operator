@@ -15,9 +15,11 @@ const sampleRSS = `<?xml version="1.0"?>
 <item><title>Hello</title><link>http://example.com/1</link><description>World</description><guid>1</guid></item>
 </channel></rss>`
 
+const testETag = `"abc123"`
+
 func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), "ftp://example.com/feed.xml")
+	_, err := c.FetchEntries(context.Background(), "ftp://example.com/feed.xml", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for non-http(s) scheme, got nil")
 	}
@@ -36,7 +38,7 @@ func TestFetchEntries_EnforcesSizeCap(t *testing.T) {
 	// Use a plain client so loopback test servers aren't rejected by the
 	// SSRF guard, isolating this test to the size-cap behavior.
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL)
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for oversized response, got nil")
 	}
@@ -52,12 +54,87 @@ func TestFetchEntries_ParsesValidRSS(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	entries, err := c.FetchEntries(context.Background(), srv.URL)
+	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Title != "Hello" {
-		t.Fatalf("unexpected entries: %+v", entries)
+	if len(result.Entries) != 1 || result.Entries[0].Title != "Hello" {
+		t.Fatalf("unexpected entries: %+v", result.Entries)
+	}
+}
+
+func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
+	var gotIfNoneMatch, gotIfModifiedSince string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIfNoneMatch = r.Header.Get("If-None-Match")
+		gotIfModifiedSince = r.Header.Get("If-Modified-Since")
+		_, _ = w.Write([]byte(sampleRSS))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
+		ETag:         testETag,
+		LastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotIfNoneMatch != testETag {
+		t.Fatalf("expected If-None-Match to be sent, got %q", gotIfNoneMatch)
+	}
+	if gotIfModifiedSince != "Wed, 21 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("expected If-Modified-Since to be sent, got %q", gotIfModifiedSince)
+	}
+}
+
+func TestFetchEntries_StoresValidatorsFromSuccessfulResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"new-etag"`)
+		w.Header().Set("Last-Modified", "Thu, 22 Oct 2015 07:28:00 GMT")
+		_, _ = w.Write([]byte(sampleRSS))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.NotModified {
+		t.Fatal("expected NotModified to be false on a 200 response")
+	}
+	if result.ETag != `"new-etag"` {
+		t.Fatalf("expected ETag to be captured, got %q", result.ETag)
+	}
+	if result.LastModified != "Thu, 22 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("expected Last-Modified to be captured, got %q", result.LastModified)
+	}
+}
+
+func TestFetchEntries_HandlesNotModifiedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == testETag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		t.Fatal("expected request to carry the previously stored ETag")
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{ETag: testETag})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.NotModified {
+		t.Fatal("expected NotModified to be true on a 304 response")
+	}
+	if len(result.Entries) != 0 {
+		t.Fatalf("expected no entries on a 304 response, got %+v", result.Entries)
+	}
+	if result.ETag != testETag {
+		t.Fatalf("expected the prior ETag to be preserved, got %q", result.ETag)
 	}
 }
 
@@ -128,7 +205,7 @@ func TestFetchEntries_RespectsTimeout(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{Timeout: 10 * time.Millisecond})
-	_, err := c.FetchEntries(context.Background(), srv.URL)
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -144,7 +221,7 @@ func TestDefaultClient_RejectsLoopbackTarget(t *testing.T) {
 	// refuse to connect to a loopback address such as a local test server
 	// or a feed URL pointing at 127.0.0.1.
 	c := NewClient(nil)
-	_, err := c.FetchEntries(context.Background(), srv.URL)
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error connecting to loopback address, got nil")
 	}

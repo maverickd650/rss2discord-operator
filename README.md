@@ -13,6 +13,7 @@ A Kubernetes operator that watches RSS feeds and posts new entries to Discord vi
 - Render entries as native Discord embeds (colored bubble, thumbnail, author/footer) instead of plain text
 - Post into forum channels, either as a new thread per entry or into an existing thread
 - Override the webhook's display name/avatar per feed group
+- Conditional GET (ETag / If-Modified-Since) on RSS fetches — skips re-downloading and re-parsing unchanged feeds
 - Configurable check interval and retry behavior
 
 ## Installing

@@ -294,6 +294,22 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              feedETag:
+                additionalProperties:
+                  type: string
+                description: |-
+                  FeedETag is a map of feed URL to the ETag header from its last fetch.
+                  Sent back as If-None-Match on the next fetch so an unchanged feed
+                  costs a 304 response instead of a full re-download and re-parse.
+                type: object
+              feedLastModified:
+                additionalProperties:
+                  type: string
+                description: |-
+                  FeedLastModified is a map of feed URL to the Last-Modified header from
+                  its last fetch. Sent back as If-Modified-Since on the next fetch,
+                  alongside FeedETag.
+                type: object
               lastChecked:
                 additionalProperties:
                   type: string

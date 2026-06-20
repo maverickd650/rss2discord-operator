@@ -61,9 +61,12 @@ func testRSSClient() *rss.Client {
 
 // MockRSSServer provides a mock RSS feed for testing
 type MockRSSServer struct {
-	server      *httptest.Server
-	feedContent string
-	statusCode  int
+	server          *httptest.Server
+	feedContent     string
+	statusCode      int
+	etag            string
+	requestCount    int
+	ifNoneMatchSeen []string
 }
 
 // NewMockRSSServer creates a new mock RSS server with test feed data
@@ -74,15 +77,45 @@ func NewMockRSSServer(feedContent string) *MockRSSServer {
 	}
 
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			w.WriteHeader(m.statusCode)
-			_, _ = w.Write([]byte(m.feedContent))
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
+
+		m.requestCount++
+		ifNoneMatch := r.Header.Get("If-None-Match")
+		m.ifNoneMatchSeen = append(m.ifNoneMatchSeen, ifNoneMatch)
+
+		if m.etag != "" {
+			w.Header().Set("ETag", m.etag)
+			if ifNoneMatch == m.etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
+		w.WriteHeader(m.statusCode)
+		_, _ = w.Write([]byte(m.feedContent))
 	}))
 
 	return m
+}
+
+// SetETag makes the server emit the given ETag header and respond 304 to
+// any request whose If-None-Match matches it.
+func (m *MockRSSServer) SetETag(etag string) {
+	m.etag = etag
+}
+
+// RequestCount returns how many GET requests the server has received.
+func (m *MockRSSServer) RequestCount() int {
+	return m.requestCount
+}
+
+// IfNoneMatchSeen returns the If-None-Match header value from each request
+// received so far, in arrival order (empty string if not sent).
+func (m *MockRSSServer) IfNoneMatchSeen() []string {
+	return m.ifNoneMatchSeen
 }
 
 func (m *MockRSSServer) URL() string {
@@ -309,6 +342,108 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
+		})
+	})
+
+	Describe("Conditional RSS fetches", func() {
+		It("should send a stored ETag on the next reconcile and skip re-processing on 304", func() {
+			const feedGroupName = "test-feedgroup-conditional-get"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server that returns an ETag")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Conditional Article",
+					description: "First fetch",
+					link:        "https://example.com/conditional-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "conditional-article",
+				},
+			))
+			rssServer.SetETag(`"v1"`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-conditional",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-conditional"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running the first reconciliation")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discordServer.MessageCount()).To(Equal(1))
+			Expect(rssServer.IfNoneMatchSeen()).To(Equal([]string{""}))
+
+			afterFirst := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirst)).To(Succeed())
+			Expect(afterFirst.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
+			lastSeenAfterFirst := afterFirst.Status.LastSeenEntry[rssServer.URL()]
+			Expect(lastSeenAfterFirst).NotTo(BeEmpty())
+
+			By("Running a second reconciliation against the unchanged feed")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the second request carried the stored ETag and got a 304")
+			Expect(rssServer.RequestCount()).To(Equal(2))
+			Expect(rssServer.IfNoneMatchSeen()[1]).To(Equal(`"v1"`))
+
+			By("Verifying no new message was sent and status was left untouched")
+			Expect(discordServer.MessageCount()).To(Equal(1))
+
+			afterSecond := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
+			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).To(Equal(lastSeenAfterFirst))
+			Expect(afterSecond.Status.LastError).To(BeEmpty())
+			Expect(afterSecond.Status.RetryCount[rssServer.URL()]).To(Equal(0))
 		})
 	})
 

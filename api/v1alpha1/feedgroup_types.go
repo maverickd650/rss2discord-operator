@@ -177,6 +177,18 @@ type FeedGroupStatus struct {
 	// +optional
 	LastError map[string]string `json:"lastError,omitempty"`
 
+	// FeedETag is a map of feed URL to the ETag header from its last fetch.
+	// Sent back as If-None-Match on the next fetch so an unchanged feed
+	// costs a 304 response instead of a full re-download and re-parse.
+	// +optional
+	FeedETag map[string]string `json:"feedETag,omitempty"`
+
+	// FeedLastModified is a map of feed URL to the Last-Modified header from
+	// its last fetch. Sent back as If-Modified-Since on the next fetch,
+	// alongside FeedETag.
+	// +optional
+	FeedLastModified map[string]string `json:"feedLastModified,omitempty"`
+
 	// RetryCount is a map of feed URL to the number of consecutive retries.
 	// +optional
 	RetryCount map[string]int `json:"retryCount,omitempty"`
