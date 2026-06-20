@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -96,6 +97,7 @@ func (m *MockRSSServer) Close() {
 type MockDiscordServer struct {
 	server           *httptest.Server
 	messagesReceived int
+	bodiesReceived   []string
 }
 
 // NewMockDiscordServer creates a new mock Discord server. It uses TLS and
@@ -109,7 +111,9 @@ func NewMockDiscordServer() *MockDiscordServer {
 
 	d.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
 			d.messagesReceived++
+			d.bodiesReceived = append(d.bodiesReceived, string(body))
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -119,6 +123,11 @@ func NewMockDiscordServer() *MockDiscordServer {
 	discord.AllowedWebhookHosts[d.server.Listener.Addr().(*net.TCPAddr).IP.String()] = true
 
 	return d
+}
+
+// Bodies returns the raw request bodies received so far, in arrival order.
+func (d *MockDiscordServer) Bodies() []string {
+	return d.bodiesReceived
 }
 
 func (d *MockDiscordServer) URL() string {
@@ -300,6 +309,169 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
+		})
+	})
+
+	Describe("Catch-up limit", func() {
+		It("should cap how many backlog entries are sent on first reconcile", func() {
+			const feedGroupName = "test-feedgroup-catchup"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server with a long backlog")
+			type item = struct {
+				title       string
+				description string
+				link        string
+				pubDate     string
+				guid        string
+			}
+			var entries []item
+			for i := 0; i < 10; i++ {
+				entries = append(entries, item{
+					title:       fmt.Sprintf("Backlog Article %d", i),
+					description: "An old article",
+					link:        fmt.Sprintf("https://example.com/article%d", i),
+					pubDate:     time.Now().Add(-time.Duration(10-i) * time.Hour).Format(time.RFC1123Z),
+					guid:        fmt.Sprintf("backlog-%d", i),
+				})
+			}
+			rssServer := NewMockRSSServer(createRSSFeed(entries...))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-catchup",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource with a catch-up limit of 3")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-catchup"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					CatchUpLimit:  3,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying only the configured catch-up limit was sent")
+			Expect(discordServer.MessageCount()).To(Equal(3))
+		})
+	})
+
+	Describe("Discord message rendering", func() {
+		It("should strip HTML from entry descriptions", func() {
+			const feedGroupName = "test-feedgroup-html"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server with an HTML description")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "HTML Article",
+					description: "&lt;p&gt;First paragraph.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;One&lt;/li&gt;&lt;/ul&gt;",
+					link:        "https://example.com/html-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "html-article",
+				},
+			))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-html",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-html"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Format:        "{{.Description}}",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the sent message has no HTML tags")
+			Expect(discordServer.Bodies()).To(HaveLen(1))
+			Expect(discordServer.Bodies()[0]).NotTo(ContainSubstring("<p>"))
+			Expect(discordServer.Bodies()[0]).NotTo(ContainSubstring("<li>"))
+			Expect(discordServer.Bodies()[0]).To(ContainSubstring("First paragraph."))
+			Expect(discordServer.Bodies()[0]).To(ContainSubstring("One"))
 		})
 	})
 
