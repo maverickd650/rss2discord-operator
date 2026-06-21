@@ -140,6 +140,7 @@ type MockDiscordServer struct {
 	bodiesReceived   []string
 	failNext         int
 	failStatus       int
+	failRetryAfter   string
 }
 
 // NewMockDiscordServer creates a new mock Discord server. It uses TLS and
@@ -159,6 +160,9 @@ func NewMockDiscordServer() *MockDiscordServer {
 
 		if d.failNext > 0 {
 			d.failNext--
+			if d.failRetryAfter != "" {
+				w.Header().Set("Retry-After", d.failRetryAfter)
+			}
 			w.WriteHeader(d.failStatus)
 			return
 		}
@@ -179,6 +183,15 @@ func NewMockDiscordServer() *MockDiscordServer {
 func (d *MockDiscordServer) FailNextRequests(n int, statusCode int) {
 	d.failNext = n
 	d.failStatus = statusCode
+}
+
+// FailNextRequestsRateLimited makes the next n webhook deliveries return a
+// 429 with the given Retry-After header, so tests can exercise the
+// controller's rate-limit backoff path.
+func (d *MockDiscordServer) FailNextRequestsRateLimited(n int, retryAfter string) {
+	d.failNext = n
+	d.failStatus = http.StatusTooManyRequests
+	d.failRetryAfter = retryAfter
 }
 
 // Bodies returns the raw request bodies received so far, in arrival order.
@@ -1861,6 +1874,197 @@ var _ = Describe("FeedGroup Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.feeds")))
+		})
+	})
+
+	Describe("Discord rate limiting", func() {
+		It("should requeue using Discord's Retry-After duration without persisting the unsent entry's validators", func() {
+			const feedGroupName = "test-feedgroup-rate-limited"
+
+			By("Creating a mock Discord webhook server that rate-limits the first delivery")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+			discordServer.FailNextRequestsRateLimited(1, "2")
+
+			By("Creating a mock RSS feed server that returns an ETag")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Rate Limited Article",
+					description: "Should survive a 429",
+					link:        "https://example.com/rate-limited-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "rate-limited-article",
+				},
+			))
+			rssServer.SetETag(`"v1"`)
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-rate-limited",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rate-limited"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running reconciliation, where Discord rate-limits the send")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discordServer.MessageCount()).To(Equal(0))
+
+			By("Verifying the reconcile requeues after Discord's Retry-After duration, not the normal interval")
+			Expect(result.RequeueAfter).To(Equal(2 * time.Second))
+
+			By("Verifying the new ETag was NOT persisted, since the entry was never sent")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.FeedETag).NotTo(HaveKey(rssServer.URL()))
+			Expect(updated.Status.LastSeenEntry).NotTo(HaveKey(rssServer.URL()))
+			Expect(updated.Status.LastError[rssServer.URL()]).To(ContainSubstring("rate limited"))
+
+			By("Reconciling again, where the send succeeds and the previously unsent entry is delivered")
+			result, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discordServer.MessageCount()).To(Equal(1))
+			Expect(result.RequeueAfter).To(Equal(30 * time.Minute))
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
+			Expect(updated.Status.LastError).To(BeEmpty())
+		})
+	})
+
+	Describe("Concurrent feed fetching", func() {
+		It("should fetch and send for every feed when the FeedGroup exceeds the concurrent-fetch limit", func() {
+			const feedGroupName = "test-feedgroup-concurrent"
+			const numFeeds = 15 // exceeds maxConcurrentFetches (10), to exercise the semaphore-bounded fan-out under -race.
+
+			By("Creating one mock RSS server per feed, each with a single unique entry")
+			rssServers := make([]*MockRSSServer, numFeeds)
+			feeds := make([]rss2discordv1alpha1.FeedSpec, numFeeds)
+			for i := range rssServers {
+				rssServers[i] = NewMockRSSServer(createRSSFeed(
+					struct {
+						title       string
+						description string
+						link        string
+						pubDate     string
+						guid        string
+					}{
+						title:       fmt.Sprintf("Concurrent Article %d", i),
+						description: "fetched concurrently",
+						link:        fmt.Sprintf("https://example.com/concurrent-%d", i),
+						pubDate:     time.Now().Format(time.RFC1123Z),
+						guid:        fmt.Sprintf("concurrent-%d", i),
+					},
+				))
+				feeds[i] = rss2discordv1alpha1.FeedSpec{RSSUrl: rssServers[i].URL()}
+			}
+			defer func() {
+				for _, s := range rssServers {
+					s.Close()
+				}
+			}()
+
+			By("Creating a mock Discord webhook server shared by all feeds")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-concurrent",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating a FeedGroup with more feeds than the concurrent-fetch limit")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-concurrent"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Feeds:         feeds,
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running reconciliation")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Minute))
+
+			By("Verifying every feed was fetched and its entry delivered, despite exceeding the concurrency limit")
+			Expect(discordServer.MessageCount()).To(Equal(numFeeds))
+
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastError).To(BeEmpty())
+			for _, s := range rssServers {
+				Expect(updated.Status.LastChecked).To(HaveKey(s.URL()))
+				Expect(updated.Status.LastSeenEntry).To(HaveKey(s.URL()))
+			}
 		})
 	})
 

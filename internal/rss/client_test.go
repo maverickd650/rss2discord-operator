@@ -17,6 +17,8 @@ const sampleRSS = `<?xml version="1.0"?>
 
 const testETag = `"abc123"`
 
+const testLastModified = "Wed, 21 Oct 2015 07:28:00 GMT"
+
 func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 	c := NewClient(&http.Client{})
 	_, err := c.FetchEntries(context.Background(), "ftp://example.com/feed.xml", CacheValidators{})
@@ -75,7 +77,7 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	c := NewClient(&http.Client{})
 	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
 		ETag:         testETag,
-		LastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+		LastModified: testLastModified,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,7 +85,7 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	if gotIfNoneMatch != testETag {
 		t.Fatalf("expected If-None-Match to be sent, got %q", gotIfNoneMatch)
 	}
-	if gotIfModifiedSince != "Wed, 21 Oct 2015 07:28:00 GMT" {
+	if gotIfModifiedSince != testLastModified {
 		t.Fatalf("expected If-Modified-Since to be sent, got %q", gotIfModifiedSince)
 	}
 }
@@ -135,6 +137,70 @@ func TestFetchEntries_HandlesNotModifiedResponse(t *testing.T) {
 	}
 	if result.ETag != testETag {
 		t.Fatalf("expected the prior ETag to be preserved, got %q", result.ETag)
+	}
+}
+
+func TestFetchEntries_ReturnsErrorOnNon2xxStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("upstream feed is down"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error for non-2xx response, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected error to include the response status, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "upstream feed is down") {
+		t.Fatalf("expected error to include the response body, got: %v", err)
+	}
+}
+
+func TestFetchEntries_ReturnsErrorOnMalformedXML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<rss><channel><item><title>Unclosed"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error for malformed XML body, got nil")
+	}
+}
+
+func TestFetchEntries_RefreshesValidatorsOnNotModified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A 304 can still carry a refreshed ETag/Last-Modified (e.g. when a
+		// CDN rotates a weak validator without the underlying content
+		// changing); the caller should store the refreshed validators rather
+		// than blindly keeping whatever it sent.
+		w.Header().Set("ETag", `"v2"`)
+		w.Header().Set("Last-Modified", "Fri, 23 Oct 2015 07:28:00 GMT")
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
+		ETag:         `"v1"`,
+		LastModified: testLastModified,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.NotModified {
+		t.Fatal("expected NotModified to be true on a 304 response")
+	}
+	if result.ETag != `"v2"` {
+		t.Fatalf("expected the refreshed ETag from the 304 response, got %q", result.ETag)
+	}
+	if result.LastModified != "Fri, 23 Oct 2015 07:28:00 GMT" {
+		t.Fatalf("expected the refreshed Last-Modified from the 304 response, got %q", result.LastModified)
 	}
 }
 
