@@ -108,6 +108,12 @@ func (m *MockRSSServer) SetETag(etag string) {
 	m.etag = etag
 }
 
+// SetFeedContent replaces the feed body returned by subsequent requests, so
+// a test can simulate a feed's contents changing between two reconciles.
+func (m *MockRSSServer) SetFeedContent(feedContent string) {
+	m.feedContent = feedContent
+}
+
 // RequestCount returns how many GET requests the server has received.
 func (m *MockRSSServer) RequestCount() int {
 	return m.requestCount
@@ -565,6 +571,155 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(afterSecond.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
 			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).NotTo(BeEmpty())
 			Expect(afterSecond.Status.LastError).To(BeEmpty())
+		})
+	})
+
+	Describe("LastSeenEntry no longer present in the feed", func() {
+		It("should fall back to catch-up instead of silently skipping every entry forever", func() {
+			const feedGroupName = "test-feedgroup-stale-lastseen"
+
+			type item = struct {
+				title       string
+				description string
+				link        string
+				pubDate     string
+				guid        string
+			}
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			By("Creating a mock RSS feed server with a single entry")
+			rssServer := NewMockRSSServer(createRSSFeed(item{
+				title:       "Original Article",
+				description: "The only entry in the feed's initial window",
+				link:        "https://example.com/original-article",
+				pubDate:     time.Now().Add(-1 * time.Hour).Format(time.RFC1123Z),
+				guid:        "original-article",
+			}))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-stale-lastseen",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-stale-lastseen"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					CatchUpLimit:  5,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running the first reconciliation, which sends and records the original entry")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discordServer.MessageCount()).To(Equal(1))
+
+			afterFirst := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirst)).To(Succeed())
+			Expect(afterFirst.Status.LastSeenEntry[rssServer.URL()]).To(Equal("original-article"))
+
+			By("Replacing the feed's window so the recorded entry is no longer present at all")
+			rssServer.SetFeedContent(createRSSFeed(
+				item{
+					title:       "Replacement Article 1",
+					description: "Published after the original scrolled out of the feed's window",
+					link:        "https://example.com/replacement-1",
+					pubDate:     time.Now().Add(-30 * time.Minute).Format(time.RFC1123Z),
+					guid:        "replacement-1",
+				},
+				item{
+					title:       "Replacement Article 2",
+					description: "Also new",
+					link:        "https://example.com/replacement-2",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "replacement-2",
+				},
+			))
+
+			By("Running a second reconciliation against the changed feed")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying both new entries were sent instead of being silently skipped forever")
+			Expect(discordServer.MessageCount()).To(Equal(3))
+
+			afterSecond := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
+			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).To(Equal("replacement-2"))
+
+			By("Adding one more entry while keeping the now-recorded entry present")
+			rssServer.SetFeedContent(createRSSFeed(
+				item{
+					title:       "Replacement Article 1",
+					description: "Published after the original scrolled out of the feed's window",
+					link:        "https://example.com/replacement-1",
+					pubDate:     time.Now().Add(-30 * time.Minute).Format(time.RFC1123Z),
+					guid:        "replacement-1",
+				},
+				item{
+					title:       "Replacement Article 2",
+					description: "Also new",
+					link:        "https://example.com/replacement-2",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "replacement-2",
+				},
+				item{
+					title:       "Replacement Article 3",
+					description: "Newest entry, published after replacement-2",
+					link:        "https://example.com/replacement-3",
+					pubDate:     time.Now().Add(1 * time.Minute).Format(time.RFC1123Z),
+					guid:        "replacement-3",
+				},
+			))
+
+			By("Running a third reconciliation against the feed with the recorded entry still present")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying only the genuinely new entry was sent, since the recorded one was found in the feed")
+			Expect(discordServer.MessageCount()).To(Equal(4))
+
+			afterThird := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterThird)).To(Succeed())
+			Expect(afterThird.Status.LastSeenEntry[rssServer.URL()]).To(Equal("replacement-3"))
 		})
 	})
 

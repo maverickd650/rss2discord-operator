@@ -300,11 +300,52 @@ func (r *FeedGroupReconciler) processFeed(
 
 	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
 	hasSeenID := lastSeenID != ""
-	foundLastSeen := !hasSeenID
-
+	if hasSeenID && !entriesContainID(entries, lastSeenID) {
+		// The stored ID has scrolled out of the feed's window (or the feed
+		// changed how it identifies this entry between fetches), so the
+		// forward-scan below would never match it and would silently treat
+		// every entry as already sent, forever. Fall back to catch-up
+		// instead of going permanently silent.
+		hasSeenID = false
+	}
 	if !hasSeenID {
 		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
 	}
+
+	wantRetry, rateLimitRetryAfter = r.sendNewEntries(ctx, feedGroup, feed, entries, hasSeenID, lastSeenID,
+		filterRegex, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, discordClient, now)
+
+	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
+
+	// Only persist now that every entry from this fetch was either sent or
+	// filtered out; if anything is still pending retry, keep the old
+	// validators so the next fetch returns the full body again instead of a
+	// 304 that would skip the unsent entry for good.
+	if !wantRetry && rateLimitRetryAfter == 0 {
+		persistValidators()
+	}
+
+	return wantRetry, rateLimitRetryAfter
+}
+
+// sendNewEntries scans entries in order, skipping forward past lastSeenID
+// (if hasSeenID is set) before sending anything, then sends each not-yet-sent
+// entry that passes the filter and updates feedGroup's status as it goes.
+func (r *FeedGroupReconciler) sendNewEntries(
+	ctx context.Context,
+	feedGroup *v1alpha1.FeedGroup,
+	feed v1alpha1.FeedSpec,
+	entries []rss.Entry,
+	hasSeenID bool,
+	lastSeenID string,
+	filterRegex *regexp.Regexp,
+	embedSpec *v1alpha1.EmbedSpec,
+	contentTmpl, descriptionTmpl, threadNameTmpl *template.Template,
+	discordClient *discord.Client,
+	now string,
+) (wantRetry bool, rateLimitRetryAfter time.Duration) {
+	log := logf.FromContext(ctx)
+	foundLastSeen := !hasSeenID
 
 	for _, entry := range entries {
 		if hasSeenID && !foundLastSeen {
@@ -371,16 +412,6 @@ func (r *FeedGroupReconciler) processFeed(
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
-	}
-
-	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
-
-	// Only persist now that every entry from this fetch was either sent or
-	// filtered out; if anything is still pending retry, keep the old
-	// validators so the next fetch returns the full body again instead of a
-	// 304 that would skip the unsent entry for good.
-	if !wantRetry && rateLimitRetryAfter == 0 {
-		persistValidators()
 	}
 
 	return wantRetry, rateLimitRetryAfter
@@ -798,6 +829,16 @@ func pruneLastSent(sent map[string]string, max int) {
 	for _, key := range keys[:len(keys)-max] {
 		delete(sent, key)
 	}
+}
+
+// entriesContainID reports whether id matches any entry's ID.
+func entriesContainID(entries []rss.Entry, id string) bool {
+	for _, entry := range entries {
+		if entry.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // limitCatchUp trims entries to at most limit, keeping the most recent ones
