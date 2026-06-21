@@ -58,7 +58,6 @@ type Embed struct {
 	// Color is a 24-bit RGB integer (0xRRGGBB), as used by Discord's API.
 	Color        int
 	Timestamp    string
-	ImageURL     string
 	ThumbnailURL string
 	AuthorName   string
 	FooterText   string
@@ -102,7 +101,6 @@ type discordEmbed struct {
 	URL         string              `json:"url,omitempty"`
 	Color       int                 `json:"color,omitempty"`
 	Timestamp   string              `json:"timestamp,omitempty"`
-	Image       *discordEmbedMedia  `json:"image,omitempty"`
 	Thumbnail   *discordEmbedMedia  `json:"thumbnail,omitempty"`
 	Author      *discordEmbedAuthor `json:"author,omitempty"`
 	Footer      *discordEmbedFooter `json:"footer,omitempty"`
@@ -235,9 +233,6 @@ func embedToPayload(e Embed) discordEmbed {
 		URL:         e.URL,
 		Color:       e.Color,
 		Timestamp:   e.Timestamp,
-	}
-	if e.ImageURL != "" {
-		payload.Image = &discordEmbedMedia{URL: e.ImageURL}
 	}
 	if e.ThumbnailURL != "" {
 		payload.Thumbnail = &discordEmbedMedia{URL: e.ThumbnailURL}

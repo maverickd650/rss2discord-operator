@@ -67,6 +67,26 @@ func TestStripHTML(t *testing.T) {
 		{name: "inline tags stripped", input: "<b>bold</b> text", want: "bold text"},
 		{name: "entities unescaped", input: "a &amp; b &lt;c&gt;", want: "a & b <c>"},
 		{name: "collapses excess blank lines", input: "<p>a</p><br><br><br><p>b</p>", want: "a\n\nb"},
+		{
+			name:  "trailing continue reading link stripped",
+			input: `<p>Some excerpt text</p><a href="https://example.com/full">Continue reading...</a>`,
+			want:  "Some excerpt text",
+		},
+		{
+			name:  "trailing continue reading link with ellipsis char stripped",
+			input: `<p>Some excerpt text</p><p><a href="https://example.com/full">Continue reading…</a></p>`,
+			want:  "Some excerpt text",
+		},
+		{
+			name:  "trailing continue reading plain text stripped",
+			input: "Some excerpt text\nContinue reading...",
+			want:  "Some excerpt text",
+		},
+		{
+			name:  "continue reading mid-text kept",
+			input: "<p>Click <a href=\"https://example.com\">Continue reading</a> below for more, then come back.</p>",
+			want:  "Click Continue reading below for more, then come back.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
