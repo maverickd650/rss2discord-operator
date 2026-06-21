@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.0...v0.4.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* fall back to catch-up when LastSeenEntry scrolls out of the feed window ([#38](https://github.com/maverickd650/rss2discord-operator/issues/38)) ([8af17de](https://github.com/maverickd650/rss2discord-operator/commit/8af17de3b212d54cf63b7c92adf3ef5306c58fec))
+* handle non-UTF-8 feeds, link/title churn, relative Atom links, and HTML in titles ([#41](https://github.com/maverickd650/rss2discord-operator/issues/41)) ([d048fe9](https://github.com/maverickd650/rss2discord-operator/commit/d048fe96d2a281ea33ebb521ff41314cc1e6ff53))
+
 ## [0.4.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.3.0...v0.4.0) (2026-06-21)
 
 
