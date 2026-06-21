@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.3.0...v0.4.0) (2026-06-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **container:** Update image ghcr.io/devcontainers/features/docker-in-docker (2 → 3) ([#26](https://github.com/maverickd650/rss2discord-operator/issues/26))
+
+### Features
+
+* add fuzz test for feed parser, expose entry author/categories ([#34](https://github.com/maverickd650/rss2discord-operator/issues/34)) ([023ac5a](https://github.com/maverickd650/rss2discord-operator/commit/023ac5a5ad1b2281c9a310b3e18c915329610817))
+* **chart:** add Grafana dashboard + PrometheusRule, shorten resource names ([#35](https://github.com/maverickd650/rss2discord-operator/issues/35)) ([f33fd1b](https://github.com/maverickd650/rss2discord-operator/commit/f33fd1b329ac9a33227396589933c20977be1aaa))
+* **container:** Update image ghcr.io/devcontainers/features/docker-in-docker (2 → 3) ([#26](https://github.com/maverickd650/rss2discord-operator/issues/26)) ([492a51c](https://github.com/maverickd650/rss2discord-operator/commit/492a51cad1d7d36ddb17538fb75070e5f6bad714))
+
+
+### Bug Fixes
+
+* **chart:** add OCI source annotation so Renovate can find release notes ([#32](https://github.com/maverickd650/rss2discord-operator/issues/32)) ([b88fa0f](https://github.com/maverickd650/rss2discord-operator/commit/b88fa0f725c459c799ae4f3acf07c0923a733b02))
+* **ci:** address zizmor findings in release workflow ([#30](https://github.com/maverickd650/rss2discord-operator/issues/30)) ([38f6f36](https://github.com/maverickd650/rss2discord-operator/commit/38f6f36279d219ea49795737dd3babc9872997cd))
+
 ## [0.3.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.2.2...v0.3.0) (2026-06-20)
 
 
