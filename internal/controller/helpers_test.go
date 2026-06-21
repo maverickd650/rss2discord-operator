@@ -224,10 +224,42 @@ func TestComputeEntryKey(t *testing.T) {
 		t.Fatal("expected identical entries to produce the same key")
 	}
 	if a == c {
-		t.Fatal("expected differing entries to produce different keys")
+		t.Fatal("expected differing IDs to produce different keys")
 	}
 	if len(a) != 64 {
 		t.Fatalf("expected 64-char hex sha256, got %d chars", len(a))
+	}
+}
+
+func TestComputeEntryKey_IgnoresLinkAndTitleChurn(t *testing.T) {
+	// A feed editing a headline or rotating a tracking parameter on an
+	// otherwise-unchanged article must not look like a new entry, as long
+	// as its GUID-derived ID is unchanged (the failure mode this guards
+	// against: a feed like the Guardian's that live-edits articles in
+	// place would otherwise get re-sent as a "new" duplicate every time the
+	// headline changed).
+	original := rss.Entry{ID: "churn-test-entry", Link: "https://example.com/churn", Title: "Original Title"}
+	edited := rss.Entry{ID: "churn-test-entry", Link: "https://example.com/churn", Title: "Updated Title"}
+
+	if computeEntryKey(original) != computeEntryKey(edited) {
+		t.Fatal("expected entries sharing an ID to produce the same key despite a title edit")
+	}
+}
+
+func TestEntryIdentity_NormalizesTrackingParamsOnURLIdentity(t *testing.T) {
+	withTracking := rss.Entry{ID: "https://example.com/article?utm_source=feed&fbclid=abc&id=42"}
+	clean := rss.Entry{ID: "https://example.com/article?id=42"}
+
+	if entryIdentity(withTracking) != entryIdentity(clean) {
+		t.Fatalf("expected tracking params to be stripped: got %q vs %q",
+			entryIdentity(withTracking), entryIdentity(clean))
+	}
+}
+
+func TestEntryIdentity_PreservesNonURLGUIDUnchanged(t *testing.T) {
+	entry := rss.Entry{ID: "tag:example.com,2026:article-123"}
+	if got := entryIdentity(entry); got != entry.ID {
+		t.Fatalf("expected opaque GUID to pass through unchanged, got %q", got)
 	}
 }
 
@@ -387,4 +419,43 @@ func TestRenderTemplate_AuthorAndCategories(t *testing.T) {
 			t.Fatalf("renderTemplate() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestRenderTemplate_StripsHTMLFromTitle(t *testing.T) {
+	tmpl, err := compileTemplate("test", "{{.Title}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry := rss.Entry{Title: "<b>Breaking</b> News &amp; Views"}
+	got, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "Breaking News & Views"; got != want {
+		t.Fatalf("renderTemplate() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildDiscordMessage_EmbedTitleStripsHTML(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	feed := &v1alpha1.FeedSpec{}
+	embedSpec := &v1alpha1.EmbedSpec{Enabled: true}
+
+	descriptionTmpl, err := compileTemplate("description", "", "{{.Description}}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry := rss.Entry{Title: "<b>Breaking</b> News"}
+	msg, err := buildDiscordMessage(feedGroup, embedSpec, nil, descriptionTmpl, nil, feed, entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Embed == nil {
+		t.Fatal("expected an embed to be set")
+	}
+	if want := "Breaking News"; msg.Embed.Title != want {
+		t.Fatalf("msg.Embed.Title = %q, want %q", msg.Embed.Title, want)
+	}
 }
