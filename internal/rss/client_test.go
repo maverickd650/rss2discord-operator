@@ -17,6 +17,8 @@ const sampleRSS = `<?xml version="1.0"?>
 
 const testETag = `"abc123"`
 
+const testLastModified = "Wed, 21 Oct 2015 07:28:00 GMT"
+
 func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 	c := NewClient(&http.Client{})
 	_, err := c.FetchEntries(context.Background(), "ftp://example.com/feed.xml", CacheValidators{})
@@ -75,7 +77,7 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	c := NewClient(&http.Client{})
 	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
 		ETag:         testETag,
-		LastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+		LastModified: testLastModified,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,7 +85,7 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	if gotIfNoneMatch != testETag {
 		t.Fatalf("expected If-None-Match to be sent, got %q", gotIfNoneMatch)
 	}
-	if gotIfModifiedSince != "Wed, 21 Oct 2015 07:28:00 GMT" {
+	if gotIfModifiedSince != testLastModified {
 		t.Fatalf("expected If-Modified-Since to be sent, got %q", gotIfModifiedSince)
 	}
 }
@@ -186,7 +188,7 @@ func TestFetchEntries_RefreshesValidatorsOnNotModified(t *testing.T) {
 	c := NewClient(&http.Client{})
 	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
 		ETag:         `"v1"`,
-		LastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+		LastModified: testLastModified,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
