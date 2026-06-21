@@ -682,6 +682,44 @@ var _ = Describe("FeedGroup Controller", func() {
 			afterSecond := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
 			Expect(afterSecond.Status.LastSeenEntry[rssServer.URL()]).To(Equal("replacement-2"))
+
+			By("Adding one more entry while keeping the now-recorded entry present")
+			rssServer.SetFeedContent(createRSSFeed(
+				item{
+					title:       "Replacement Article 1",
+					description: "Published after the original scrolled out of the feed's window",
+					link:        "https://example.com/replacement-1",
+					pubDate:     time.Now().Add(-30 * time.Minute).Format(time.RFC1123Z),
+					guid:        "replacement-1",
+				},
+				item{
+					title:       "Replacement Article 2",
+					description: "Also new",
+					link:        "https://example.com/replacement-2",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "replacement-2",
+				},
+				item{
+					title:       "Replacement Article 3",
+					description: "Newest entry, published after replacement-2",
+					link:        "https://example.com/replacement-3",
+					pubDate:     time.Now().Add(1 * time.Minute).Format(time.RFC1123Z),
+					guid:        "replacement-3",
+				},
+			))
+
+			By("Running a third reconciliation against the feed with the recorded entry still present")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying only the genuinely new entry was sent, since the recorded one was found in the feed")
+			Expect(discordServer.MessageCount()).To(Equal(4))
+
+			afterThird := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterThird)).To(Succeed())
+			Expect(afterThird.Status.LastSeenEntry[rssServer.URL()]).To(Equal("replacement-3"))
 		})
 	})
 

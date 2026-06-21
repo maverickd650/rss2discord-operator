@@ -308,11 +308,44 @@ func (r *FeedGroupReconciler) processFeed(
 		// instead of going permanently silent.
 		hasSeenID = false
 	}
-	foundLastSeen := !hasSeenID
-
 	if !hasSeenID {
 		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
 	}
+
+	wantRetry, rateLimitRetryAfter = r.sendNewEntries(ctx, feedGroup, feed, entries, hasSeenID, lastSeenID,
+		filterRegex, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, discordClient, now)
+
+	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
+
+	// Only persist now that every entry from this fetch was either sent or
+	// filtered out; if anything is still pending retry, keep the old
+	// validators so the next fetch returns the full body again instead of a
+	// 304 that would skip the unsent entry for good.
+	if !wantRetry && rateLimitRetryAfter == 0 {
+		persistValidators()
+	}
+
+	return wantRetry, rateLimitRetryAfter
+}
+
+// sendNewEntries scans entries in order, skipping forward past lastSeenID
+// (if hasSeenID is set) before sending anything, then sends each not-yet-sent
+// entry that passes the filter and updates feedGroup's status as it goes.
+func (r *FeedGroupReconciler) sendNewEntries(
+	ctx context.Context,
+	feedGroup *v1alpha1.FeedGroup,
+	feed v1alpha1.FeedSpec,
+	entries []rss.Entry,
+	hasSeenID bool,
+	lastSeenID string,
+	filterRegex *regexp.Regexp,
+	embedSpec *v1alpha1.EmbedSpec,
+	contentTmpl, descriptionTmpl, threadNameTmpl *template.Template,
+	discordClient *discord.Client,
+	now string,
+) (wantRetry bool, rateLimitRetryAfter time.Duration) {
+	log := logf.FromContext(ctx)
+	foundLastSeen := !hasSeenID
 
 	for _, entry := range entries {
 		if hasSeenID && !foundLastSeen {
@@ -379,16 +412,6 @@ func (r *FeedGroupReconciler) processFeed(
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
-	}
-
-	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
-
-	// Only persist now that every entry from this fetch was either sent or
-	// filtered out; if anything is still pending retry, keep the old
-	// validators so the next fetch returns the full body again instead of a
-	// 304 that would skip the unsent entry for good.
-	if !wantRetry && rateLimitRetryAfter == 0 {
-		persistValidators()
 	}
 
 	return wantRetry, rateLimitRetryAfter
