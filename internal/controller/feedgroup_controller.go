@@ -300,6 +300,14 @@ func (r *FeedGroupReconciler) processFeed(
 
 	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
 	hasSeenID := lastSeenID != ""
+	if hasSeenID && !entriesContainID(entries, lastSeenID) {
+		// The stored ID has scrolled out of the feed's window (or the feed
+		// changed how it identifies this entry between fetches), so the
+		// forward-scan below would never match it and would silently treat
+		// every entry as already sent, forever. Fall back to catch-up
+		// instead of going permanently silent.
+		hasSeenID = false
+	}
 	foundLastSeen := !hasSeenID
 
 	if !hasSeenID {
@@ -798,6 +806,16 @@ func pruneLastSent(sent map[string]string, max int) {
 	for _, key := range keys[:len(keys)-max] {
 		delete(sent, key)
 	}
+}
+
+// entriesContainID reports whether id matches any entry's ID.
+func entriesContainID(entries []rss.Entry, id string) bool {
+	for _, entry := range entries {
+		if entry.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // limitCatchUp trims entries to at most limit, keeping the most recent ones
