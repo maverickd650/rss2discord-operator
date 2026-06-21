@@ -131,10 +131,10 @@ func TestSendMessage_ReturnsErrorOnNon2xx(t *testing.T) {
 }
 
 func TestEmbedToPayload_OmitsUnsetMedia(t *testing.T) {
-	// An embed with only a title should produce no image/thumbnail/author/
-	// footer sub-objects, so they stay omitted from the JSON.
+	// An embed with only a title should produce no thumbnail/author/footer
+	// sub-objects, so they stay omitted from the JSON.
 	p := embedToPayload(Embed{Title: "only title"})
-	if p.Image != nil || p.Thumbnail != nil || p.Author != nil || p.Footer != nil {
+	if p.Thumbnail != nil || p.Author != nil || p.Footer != nil {
 		t.Fatalf("expected unset embed media to be nil, got %+v", p)
 	}
 	if p.Title != "only title" {

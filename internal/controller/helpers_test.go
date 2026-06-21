@@ -12,6 +12,10 @@ import (
 // shortContent is reused across truncation test cases below.
 const shortContent = "short"
 
+// excerptText is reused across the "continue reading" stripHTML test cases
+// below.
+const excerptText = "Some excerpt text"
+
 func TestParseHexColor(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -67,6 +71,26 @@ func TestStripHTML(t *testing.T) {
 		{name: "inline tags stripped", input: "<b>bold</b> text", want: "bold text"},
 		{name: "entities unescaped", input: "a &amp; b &lt;c&gt;", want: "a & b <c>"},
 		{name: "collapses excess blank lines", input: "<p>a</p><br><br><br><p>b</p>", want: "a\n\nb"},
+		{
+			name:  "trailing continue reading link stripped",
+			input: `<p>` + excerptText + `</p><a href="https://example.com/full">Continue reading...</a>`,
+			want:  excerptText,
+		},
+		{
+			name:  "trailing continue reading link with ellipsis char stripped",
+			input: `<p>` + excerptText + `</p><p><a href="https://example.com/full">Continue reading…</a></p>`,
+			want:  excerptText,
+		},
+		{
+			name:  "trailing continue reading plain text stripped",
+			input: excerptText + "\nContinue reading...",
+			want:  excerptText,
+		},
+		{
+			name:  "continue reading mid-text kept",
+			input: "<p>Click <a href=\"https://example.com\">Continue reading</a> below for more, then come back.</p>",
+			want:  "Click Continue reading below for more, then come back.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

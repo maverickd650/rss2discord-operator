@@ -754,11 +754,24 @@ var htmlTagRegex = regexp.MustCompile(`<[^>]+>`)
 // stripped) down to a single blank line.
 var blankLineRegex = regexp.MustCompile(`\n{3,}`)
 
+// continueReadingLinkRegex matches a trailing "Continue reading..." anchor,
+// the boilerplate several feeds (e.g. the Guardian's) append to truncated
+// descriptions. It's redundant in Discord: the embed title/message already
+// links to the full article, so left in place it reads as a dead "read
+// more" link with nowhere to click.
+var continueReadingLinkRegex = regexp.MustCompile(`(?i)<a\b[^>]*>\s*continue reading\s*(\.{2,3}|…)?\s*</a>\s*(</[a-z0-9]+>\s*)*$`)
+
+// continueReadingTextRegex is a fallback for feeds that ship the same
+// boilerplate as plain text rather than wrapping it in an <a> tag.
+var continueReadingTextRegex = regexp.MustCompile(`(?i)continue reading\s*(\.{2,3}|…)?\s*$`)
+
 // stripHTML converts an RSS/Atom entry's title or description into
 // Discord-friendly plain text. Many feeds (e.g. the Guardian's) ship these
 // as raw or escaped HTML, which Discord otherwise renders as literal tag
 // soup.
 func stripHTML(input string) string {
+	input = continueReadingLinkRegex.ReplaceAllString(input, "")
+
 	text := htmlBlockTagRegex.ReplaceAllString(input, "\n")
 	text = htmlTagRegex.ReplaceAllString(text, "")
 	text = html.UnescapeString(text)
@@ -768,6 +781,7 @@ func stripHTML(input string) string {
 		lines[i] = strings.TrimSpace(line)
 	}
 	text = blankLineRegex.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+	text = continueReadingTextRegex.ReplaceAllString(strings.TrimSpace(text), "")
 
 	return strings.TrimSpace(text)
 }
