@@ -29,6 +29,8 @@ type Entry struct {
 	Link        string
 	Description string
 	Image       string
+	Author      string
+	Categories  []string
 	Published   time.Time
 }
 
@@ -204,11 +206,18 @@ type rssChannel struct {
 }
 
 type rssItem struct {
-	Title          string        `xml:"title"`
-	Link           string        `xml:"link"`
-	Description    string        `xml:"description"`
-	GUID           string        `xml:"guid"`
-	PubDate        string        `xml:"pubDate"`
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	GUID        string `xml:"guid"`
+	PubDate     string `xml:"pubDate"`
+	Author      string `xml:"author"`
+	// Creator matches Dublin Core's <dc:creator>, the de facto author field
+	// for feeds (e.g. WordPress) that don't use RSS's own <author>.
+	// encoding/xml matches by local name regardless of namespace prefix, so
+	// this also covers <creator> without a dc: prefix.
+	Creator        string        `xml:"creator"`
+	Categories     []string      `xml:"category"`
 	Enclosure      *rssEnclosure `xml:"enclosure"`
 	MediaThumbnail *rssMediaURL  `xml:"thumbnail"`
 	MediaContent   []rssMediaURL `xml:"content"`
@@ -254,13 +263,26 @@ func entryImage(enclosure *rssEnclosure, thumbnail *rssMediaURL, content []rssMe
 }
 
 type atomEntry struct {
-	ID        string     `xml:"id"`
-	Title     string     `xml:"title"`
-	Links     []atomLink `xml:"link"`
-	Summary   string     `xml:"summary"`
-	Content   string     `xml:"content"`
-	Updated   string     `xml:"updated"`
-	Published string     `xml:"published"`
+	ID         string         `xml:"id"`
+	Title      string         `xml:"title"`
+	Links      []atomLink     `xml:"link"`
+	Summary    string         `xml:"summary"`
+	Content    string         `xml:"content"`
+	Updated    string         `xml:"updated"`
+	Published  string         `xml:"published"`
+	Author     atomAuthor     `xml:"author"`
+	Categories []atomCategory `xml:"category"`
+}
+
+type atomAuthor struct {
+	Name string `xml:"name"`
+}
+
+// atomCategory is Atom's <category term="..."/>; Term is the human-readable
+// label (RSS's <category> has no separate machine label, so RSS and Atom
+// categories are normalized to the same []string on Entry).
+type atomCategory struct {
+	Term string `xml:"term,attr"`
 }
 
 type atomLink struct {
@@ -297,6 +319,19 @@ func enclosureImage(links []atomLink) string {
 
 type atomFeed struct {
 	Entries []atomEntry `xml:"entry"`
+}
+
+// trimCategories trims each category and drops any that are blank, so
+// whitespace-only <category> elements don't surface as empty entries.
+func trimCategories(raw []string) []string {
+	categories := make([]string, 0, len(raw))
+	for _, c := range raw {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			categories = append(categories, c)
+		}
+	}
+	return categories
 }
 
 func parseFeed(data []byte) ([]Entry, error) {
@@ -339,12 +374,19 @@ func parseRSS(data []byte) ([]Entry, error) {
 			id = strings.TrimSpace(item.Title)
 		}
 
+		author := strings.TrimSpace(item.Author)
+		if author == "" {
+			author = strings.TrimSpace(item.Creator)
+		}
+
 		entries = append(entries, Entry{
 			ID:          id,
 			Title:       strings.TrimSpace(item.Title),
 			Link:        strings.TrimSpace(item.Link),
 			Description: strings.TrimSpace(item.Description),
 			Image:       strings.TrimSpace(entryImage(item.Enclosure, item.MediaThumbnail, item.MediaContent)),
+			Author:      author,
+			Categories:  trimCategories(item.Categories),
 			Published:   published,
 		})
 	}
@@ -380,12 +422,19 @@ func parseAtom(data []byte) ([]Entry, error) {
 			description = strings.TrimSpace(item.Content)
 		}
 
+		categoryTerms := make([]string, len(item.Categories))
+		for i, c := range item.Categories {
+			categoryTerms[i] = c.Term
+		}
+
 		entries = append(entries, Entry{
 			ID:          id,
 			Title:       strings.TrimSpace(item.Title),
 			Link:        strings.TrimSpace(link),
 			Description: description,
 			Image:       strings.TrimSpace(enclosureImage(item.Links)),
+			Author:      strings.TrimSpace(item.Author.Name),
+			Categories:  trimCategories(categoryTerms),
 			Published:   published,
 		})
 	}

@@ -215,7 +215,7 @@ spec:
                   [Read more]({{.Link}})
                 description: |-
                   Format is the default template for Discord messages.
-                  Supports placeholders: {{.Title}}, {{.Description}}, {{.Link}}, {{.Published}}.
+                  Supports placeholders: {{.Title}}, {{.Description}}, {{.Link}}, {{.Published}}, {{.Author}}, {{.Categories}}.
                 type: string
               interval:
                 default: 30m

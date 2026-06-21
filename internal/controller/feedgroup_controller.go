@@ -694,11 +694,15 @@ func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, 
 		Description string
 		Link        string
 		Published   string
+		Author      string
+		Categories  string
 	}{
 		Title:       entry.Title,
 		Description: stripHTML(entry.Description),
 		Link:        entry.Link,
 		Published:   entry.Published.UTC().Format(time.RFC3339),
+		Author:      entry.Author,
+		Categories:  strings.Join(entry.Categories, ", "),
 	}
 
 	var buf bytes.Buffer

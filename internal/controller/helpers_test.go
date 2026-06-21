@@ -362,3 +362,29 @@ func TestCompileMessageTemplate_Precedence(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderTemplate_AuthorAndCategories(t *testing.T) {
+	tmpl, err := compileTemplate("test", "{{.Author}} | {{.Categories}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry := rss.Entry{Author: "Jane Doe", Categories: []string{"Go", "Kubernetes"}}
+	got, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "Jane Doe | Go, Kubernetes"; got != want {
+		t.Fatalf("renderTemplate() = %q, want %q", got, want)
+	}
+
+	t.Run("empty author and categories render blank", func(t *testing.T) {
+		got, err := renderTemplate(tmpl, rss.Entry{}, maxDiscordMessageLength)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := " | "; got != want {
+			t.Fatalf("renderTemplate() = %q, want %q", got, want)
+		}
+	})
+}
