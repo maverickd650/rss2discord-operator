@@ -170,6 +170,42 @@ certManager:
 prometheus:
   enabled: false
 
+## PrometheusRule alerting on the rss2discord_feed_operations_total metric.
+## Requires prometheus-operator to be installed in the cluster.
+##
+prometheusRule:
+  enabled: false
+  ## Window over which fetch_error/send_error/rate_limited rates are evaluated
+  ##
+  rateInterval: 15m
+  ## How long an outcome must persist before the alert fires
+  ##
+  for: 15m
+  ## Severity label applied to all generated alerts
+  ##
+  severity: warning
+  ## Extra labels added to the PrometheusRule (e.g. to match a Prometheus ruleSelector)
+  ##
+  # labels: {}
+
+## Grafana dashboard for the rss2discord_feed_operations_total metric.
+## Rendered as a ConfigMap discovered by the Grafana dashboard sidecar.
+##
+grafanaDashboard:
+  enabled: false
+  ## Namespace for the ConfigMap (defaults to the release namespace).
+  ## Set this if your Grafana sidecar only watches a specific namespace.
+  ##
+  # namespace: ""
+  ## Label/value the Grafana sidecar uses to discover dashboards
+  ##
+  sidecarLabel: grafana_dashboard
+  sidecarLabelValue: "1"
+  ## Extra labels and annotations added to the ConfigMap
+  ##
+  # labels: {}
+  # annotations: {}
+
 ## Network policies for controlling traffic flow.
 ## Enable to restrict ingress to the controller manager.
 ##
