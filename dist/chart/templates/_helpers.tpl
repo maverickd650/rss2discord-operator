@@ -50,14 +50,25 @@ Dynamically calculates safe truncation to ensure total name length <= 63 chars.
 {{- end }}
 
 {{/*
+Controller-manager workload name (Deployment, ServiceAccount).
+Uses the plain fullname so resources don't carry a verbose
+"-controller-manager" suffix; the "control-plane: controller-manager"
+label is what selectors actually match on, so names stay short while
+selection is unaffected.
+*/}}
+{{- define "rss2discord-operator.controllerManagerName" -}}
+{{- include "rss2discord-operator.fullname" . }}
+{{- end }}
+
+{{/*
 ServiceAccount name to use.
 If serviceAccount.enabled is false and serviceAccount.name is set, use that name.
-Otherwise, use the standard resourceName helper with "controller-manager" suffix.
+Otherwise, use the controller-manager workload name.
 */}}
 {{- define "rss2discord-operator.serviceAccountName" -}}
 {{- if and (not (.Values.serviceAccount.enabled | default true)) .Values.serviceAccount.name }}
 {{- .Values.serviceAccount.name }}
 {{- else }}
-{{- include "rss2discord-operator.resourceName" (dict "suffix" "controller-manager" "context" .) }}
+{{- include "rss2discord-operator.controllerManagerName" . }}
 {{- end }}
 {{- end }}

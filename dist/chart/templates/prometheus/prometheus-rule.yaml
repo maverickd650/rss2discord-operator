@@ -1,0 +1,62 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "rss2discord-operator.resourceName" (dict "suffix" "alerts" "context" $) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "rss2discord-operator.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    control-plane: controller-manager
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: rss2discord-operator.feedgroups
+    rules:
+    - alert: RSS2DiscordFeedFetchErrors
+      expr: |-
+        sum by (namespace, name) (
+          rate(rss2discord_feed_operations_total{outcome="fetch_error"}[{{ .Values.prometheusRule.rateInterval }}])
+        ) > 0
+      for: {{ .Values.prometheusRule.for }}
+      labels:
+        severity: {{ .Values.prometheusRule.severity }}
+      annotations:
+        summary: FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} is failing to fetch its feed
+        description: >-
+          FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}
+          has had sustained RSS fetch errors for at least {{ .Values.prometheusRule.for }}.
+          Check the feed URL, network egress, and the FeedGroup status conditions.
+    - alert: RSS2DiscordFeedRateLimited
+      expr: |-
+        sum by (namespace, name) (
+          rate(rss2discord_feed_operations_total{outcome="rate_limited"}[{{ .Values.prometheusRule.rateInterval }}])
+        ) > 0
+      for: {{ .Values.prometheusRule.for }}
+      labels:
+        severity: {{ .Values.prometheusRule.severity }}
+      annotations:
+        summary: FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} is being rate limited by Discord
+        description: >-
+          FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}
+          has been rate limited by Discord for at least {{ .Values.prometheusRule.for }}.
+          Posts are being delayed; consider reducing the polling frequency or splitting the feed.
+    - alert: RSS2DiscordFeedSendErrors
+      expr: |-
+        sum by (namespace, name) (
+          rate(rss2discord_feed_operations_total{outcome="send_error"}[{{ .Values.prometheusRule.rateInterval }}])
+        ) > 0
+      for: {{ .Values.prometheusRule.for }}
+      labels:
+        severity: {{ .Values.prometheusRule.severity }}
+      annotations:
+        summary: FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }} is failing to send to Discord
+        description: >-
+          FeedGroup {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.name {{ "}}" }}
+          has had sustained Discord send errors for at least {{ .Values.prometheusRule.for }}.
+          Check the webhook URL and the FeedGroup status conditions.
+{{- end }}

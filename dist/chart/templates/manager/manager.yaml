@@ -13,7 +13,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
     {{- end }}
-  name: {{ include "rss2discord-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+  name: {{ include "rss2discord-operator.controllerManagerName" . }}
   namespace: {{ .Release.Namespace }}
   {{- if .Values.manager.annotations }}
   annotations:

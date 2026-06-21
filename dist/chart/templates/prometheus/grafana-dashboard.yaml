@@ -1,0 +1,25 @@
+{{- if .Values.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rss2discord-operator.resourceName" (dict "suffix" "grafana-dashboard" "context" $) }}
+  namespace: {{ default .Release.Namespace .Values.grafanaDashboard.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "rss2discord-operator.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with .Values.grafanaDashboard.sidecarLabel }}
+    {{ . }}: {{ $.Values.grafanaDashboard.sidecarLabelValue | quote }}
+    {{- end }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  rss2discord-feedgroups.json: |-
+{{ .Files.Get "dashboards/feedgroup-overview.json" | indent 4 }}
+{{- end }}
