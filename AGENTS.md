@@ -165,7 +165,7 @@ IMG=$IMG mise run deploy
 kubectl apply -k config/samples/
 
 # 4. Debug
-kubectl logs -n <project>-system deployment/<project>-controller-manager -c manager -f
+kubectl logs -n <project>-system -l control-plane=controller-manager -c manager -f
 ```
 
 ### API Design

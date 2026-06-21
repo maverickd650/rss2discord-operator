@@ -59,7 +59,7 @@ kubectl apply -f my-feedgroup.yaml
 ## 4. Check it's working
 
 ```bash
-kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-controller-manager -f
+kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager -f
 kubectl describe feedgroup tech-news -n default
 ```
 

@@ -17,6 +17,7 @@ A Kubernetes operator that watches RSS feeds and posts new entries to Discord vi
 - Override the webhook's display name/avatar per feed group
 - Conditional GET (ETag / If-Modified-Since) on RSS fetches — skips re-downloading and re-parsing unchanged feeds
 - Configurable check interval and retry behavior
+- Prometheus metrics, an optional ServiceMonitor, PrometheusRule alerts, and a Grafana dashboard for per-outcome feed processing
 
 ## Installing
 
@@ -36,7 +37,7 @@ helm install rss2discord-operator ./dist/chart \
 kubectl apply -f dist/install.yaml
 ```
 
-### Make
+### mise
 
 ```bash
 IMG=my-registry/rss2discord-operator:v0.1.0 mise run deploy
@@ -103,7 +104,7 @@ kubectl apply -f feedgroup.yaml
 3. Watch it work:
 
 ```bash
-kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-controller-manager -f
+kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager -f
 ```
 
 ## Configuration reference
@@ -224,16 +225,18 @@ Located in `dist/chart/`. Key values in `dist/chart/values.yaml`:
 ```yaml
 manager:
   image:
-    repository: rss2discord-operator
-    tag: latest
+    repository: ghcr.io/maverickd650/rss2discord-operator
+    # tag: ""   # defaults to the chart's appVersion
   resources:
     limits:
       cpu: 500m
       memory: 128Mi
     requests:
-      cpu: 100m
+      cpu: 10m
       memory: 64Mi
 ```
+
+Resource names drop the redundant `-controller-manager` suffix — with a release named `rss2discord-operator`, the Deployment, ServiceAccount, and Service are all named `rss2discord-operator` (selection still happens on the `control-plane: controller-manager` label). The `kubectl apply -f dist/install.yaml` path keeps the longer `rss2discord-operator-controller-manager` names, so prefer the label selector in commands that target the pod.
 
 Common commands:
 
@@ -244,12 +247,34 @@ helm rollback rss2discord-operator -n rss2discord-operator-system
 helm uninstall rss2discord-operator -n rss2discord-operator-system
 ```
 
+## Observability
+
+The controller exports a Prometheus counter, `rss2discord_feed_operations_total`, labeled by `namespace`, `name` (the FeedGroup), and `outcome`. Outcomes are `sent`, `fetch_error`, `send_error`, `render_error`, and `rate_limited`, so you can track send-success ratios and break errors down per FeedGroup.
+
+The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`). The remaining pieces are opt-in via chart values and each requires the relevant operator to be installed in the cluster:
+
+| Value | Default | What it does |
+|-------|---------|--------------|
+| `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
+| `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per FeedGroup. Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
+| `grafanaDashboard.enabled` | `false` | Ships a Grafana dashboard (outcome rates, send-success ratio, per-FeedGroup error breakdown) as a ConfigMap discovered by the Grafana dashboard sidecar. Tune the sidecar discovery label with `grafanaDashboard.sidecarLabel` / `.sidecarLabelValue` |
+
+```bash
+helm install rss2discord-operator ./dist/chart \
+  --namespace rss2discord-operator-system --create-namespace \
+  --set prometheus.enabled=true \
+  --set prometheusRule.enabled=true \
+  --set grafanaDashboard.enabled=true
+```
+
+The dashboard JSON lives at [`dist/chart/dashboards/feedgroup-overview.json`](dist/chart/dashboards/feedgroup-overview.json) if you'd rather import it manually.
+
 ## Troubleshooting
 
 Check logs:
 
 ```bash
-kubectl logs -n rss2discord-operator-system deployment/rss2discord-operator-controller-manager -f
+kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager -f
 ```
 
 Check FeedGroup status:
