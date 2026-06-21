@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.1...v0.4.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* strip trailing "Continue reading" boilerplate, remove dead Embed.ImageURL ([#42](https://github.com/maverickd650/rss2discord-operator/issues/42)) ([04fc026](https://github.com/maverickd650/rss2discord-operator/commit/04fc0269b03fa8d284d5fcc15be8587578627ade))
+
 ## [0.4.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.0...v0.4.1) (2026-06-21)
 
 
