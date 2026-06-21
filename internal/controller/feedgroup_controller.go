@@ -349,7 +349,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 
 	for _, entry := range entries {
 		if hasSeenID && !foundLastSeen {
-			if entry.ID == lastSeenID {
+			if entryIdentity(entry) == lastSeenID {
 				foundLastSeen = true
 			}
 			continue
@@ -408,7 +408,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		}
 
 		feedGroup.Status.LastSent[feed.RSSUrl][entryKey] = now
-		feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entry.ID
+		feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entryIdentity(entry)
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
@@ -570,8 +570,72 @@ func setReadyCondition(feedGroup *v1alpha1.FeedGroup) {
 	})
 }
 
+// trackingQueryParams lists query-string parameters added by analytics or
+// sharing tools that commonly get appended, rotated, or dropped between
+// fetches of an otherwise-unchanged article (FeedBurner/WordPress are
+// common sources). They're stripped in normalizeIdentity so churn limited
+// to these parameters doesn't make an unchanged article look new.
+var trackingQueryParams = map[string]bool{
+	"fbclid":  true,
+	"gclid":   true,
+	"mc_eid":  true,
+	"mc_cid":  true,
+	"igshid":  true,
+	"ref_src": true,
+	"ref":     true,
+	"mkt_tok": true,
+	"_hsenc":  true,
+	"_hsmi":   true,
+	"spm":     true,
+}
+
+// normalizeIdentity normalizes id when it's an http(s) URL (an entry's ID
+// is frequently just its permalink, since the RSS/Atom parser falls back to
+// Link, then Title, when a feed has no GUID): lowercases the scheme/host,
+// drops the fragment, and strips known tracking query parameters, so that
+// churn limited to those doesn't change the result. Anything that isn't a
+// URL (an opaque GUID, or a Title used as a last-resort identity) is
+// returned unchanged, since there's no generically safe way to normalize
+// arbitrary text.
+func normalizeIdentity(id string) string {
+	parsed, err := neturl.Parse(id)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return id
+	}
+
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Fragment = ""
+
+	if query := parsed.Query(); len(query) > 0 {
+		for param := range query {
+			if trackingQueryParams[strings.ToLower(param)] || strings.HasPrefix(strings.ToLower(param), "utm_") {
+				query.Del(param)
+			}
+		}
+		parsed.RawQuery = query.Encode()
+	}
+
+	return parsed.String()
+}
+
+// entryIdentity resolves entry's stable identity, used for both the
+// catch-up watermark (LastSeenEntry) and per-entry dedup (LastSent):
+// entry.ID itself (already resolved via GUID -> Link -> Title precedence by
+// the RSS/Atom parser), normalized when it's a URL.
+func entryIdentity(entry rss.Entry) string {
+	return normalizeIdentity(entry.ID)
+}
+
+// computeEntryKey hashes an entry's identity into a fixed-length key for
+// Status.LastSent. It intentionally does not also fold in Link or Title the
+// way an earlier version did: those commonly churn (a rotated tracking
+// parameter, an edited headline) on an otherwise-unchanged article, and
+// folding them into the key made every such edit look like a brand new
+// entry and get re-sent as a duplicate -- defeating the point of having a
+// stable GUID-based identity in the first place.
 func computeEntryKey(entry rss.Entry) string {
-	hash := sha256.Sum256([]byte(entry.ID + "|" + entry.Link + "|" + entry.Title))
+	hash := sha256.Sum256([]byte(entryIdentity(entry)))
 	return hex.EncodeToString(hash[:])
 }
 
@@ -831,10 +895,11 @@ func pruneLastSent(sent map[string]string, max int) {
 	}
 }
 
-// entriesContainID reports whether id matches any entry's ID.
+// entriesContainID reports whether id matches any entry's identity (see
+// entryIdentity).
 func entriesContainID(entries []rss.Entry, id string) bool {
 	for _, entry := range entries {
-		if entry.ID == id {
+		if entryIdentity(entry) == id {
 			return true
 		}
 	}

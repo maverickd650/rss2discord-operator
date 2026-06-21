@@ -1,6 +1,7 @@
 package rss
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html/charset"
 )
 
 // maxFeedResponseBytes bounds how much of a feed response we will read into
@@ -334,11 +337,21 @@ func trimCategories(raw []string) []string {
 	return categories
 }
 
+// unmarshalXML decodes data into v using encoding/xml, with a CharsetReader
+// so feeds that declare a non-UTF-8 encoding (ISO-8859-1/windows-1252 are
+// common among older or non-English-language publishers) decode instead of
+// failing outright; encoding/xml has no charset support of its own.
+func unmarshalXML(data []byte, v any) error {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.CharsetReader = charset.NewReaderLabel
+	return decoder.Decode(v)
+}
+
 func parseFeed(data []byte) ([]Entry, error) {
 	var envelope struct {
 		XMLName xml.Name
 	}
-	if err := xml.Unmarshal(data, &envelope); err != nil {
+	if err := unmarshalXML(data, &envelope); err != nil {
 		return nil, err
 	}
 
@@ -359,7 +372,7 @@ func parseFeed(data []byte) ([]Entry, error) {
 
 func parseRSS(data []byte) ([]Entry, error) {
 	var envelope rssEnvelope
-	if err := xml.Unmarshal(data, &envelope); err != nil {
+	if err := unmarshalXML(data, &envelope); err != nil {
 		return nil, err
 	}
 
@@ -396,7 +409,7 @@ func parseRSS(data []byte) ([]Entry, error) {
 
 func parseAtom(data []byte) ([]Entry, error) {
 	var feed atomFeed
-	if err := xml.Unmarshal(data, &feed); err != nil {
+	if err := unmarshalXML(data, &feed); err != nil {
 		return nil, err
 	}
 

@@ -353,3 +353,36 @@ func TestParseFeed_UnknownRootFallsBackToAtom(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestParseFeed_DecodesNonUTF8Encodings(t *testing.T) {
+	// encoding/xml has no charset support of its own and errors out on any
+	// non-UTF-8 declared encoding unless a CharsetReader is wired up; older
+	// or non-English-language publishers commonly declare ISO-8859-1 or
+	// windows-1252, so a feed in either must still parse and decode its
+	// Latin-1 bytes (here 0xE9, "é") to the correct UTF-8 rune.
+	cases := []struct {
+		name     string
+		encoding string
+	}{
+		{name: "ISO-8859-1", encoding: "ISO-8859-1"},
+		{name: "windows-1252", encoding: "windows-1252"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte("<?xml version=\"1.0\" encoding=\"" + tc.encoding + "\"?>" +
+				"<rss><channel><item><title>Caf\xe9</title><guid>1</guid></item></channel></rss>")
+
+			entries, err := parseFeed(data)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("expected 1 entry, got %d", len(entries))
+			}
+			if want := "Café"; entries[0].Title != want {
+				t.Fatalf("expected title %q, got %q", want, entries[0].Title)
+			}
+		})
+	}
+}

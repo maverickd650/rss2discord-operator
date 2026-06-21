@@ -224,10 +224,42 @@ func TestComputeEntryKey(t *testing.T) {
 		t.Fatal("expected identical entries to produce the same key")
 	}
 	if a == c {
-		t.Fatal("expected differing entries to produce different keys")
+		t.Fatal("expected differing IDs to produce different keys")
 	}
 	if len(a) != 64 {
 		t.Fatalf("expected 64-char hex sha256, got %d chars", len(a))
+	}
+}
+
+func TestComputeEntryKey_IgnoresLinkAndTitleChurn(t *testing.T) {
+	// A feed editing a headline or rotating a tracking parameter on an
+	// otherwise-unchanged article must not look like a new entry, as long
+	// as its GUID-derived ID is unchanged (the failure mode this guards
+	// against: a feed like the Guardian's that live-edits articles in
+	// place would otherwise get re-sent as a "new" duplicate every time the
+	// headline changed).
+	original := rss.Entry{ID: "article-1", Link: "https://example.com/a", Title: "Original Title"}
+	edited := rss.Entry{ID: "article-1", Link: "https://example.com/a", Title: "Updated Title"}
+
+	if computeEntryKey(original) != computeEntryKey(edited) {
+		t.Fatal("expected entries sharing an ID to produce the same key despite a title edit")
+	}
+}
+
+func TestEntryIdentity_NormalizesTrackingParamsOnURLIdentity(t *testing.T) {
+	withTracking := rss.Entry{ID: "https://example.com/article?utm_source=feed&fbclid=abc&id=42"}
+	clean := rss.Entry{ID: "https://example.com/article?id=42"}
+
+	if entryIdentity(withTracking) != entryIdentity(clean) {
+		t.Fatalf("expected tracking params to be stripped: got %q vs %q",
+			entryIdentity(withTracking), entryIdentity(clean))
+	}
+}
+
+func TestEntryIdentity_PreservesNonURLGUIDUnchanged(t *testing.T) {
+	entry := rss.Entry{ID: "tag:example.com,2026:article-123"}
+	if got := entryIdentity(entry); got != entry.ID {
+		t.Fatalf("expected opaque GUID to pass through unchanged, got %q", got)
 	}
 }
 
