@@ -292,6 +292,28 @@ func TestParseFeed_AtomLeavesRelativeLinkUnchangedWithoutBase(t *testing.T) {
 	}
 }
 
+func TestResolveAtomURL(t *testing.T) {
+	cases := []struct {
+		name string
+		base string
+		ref  string
+		want string
+	}{
+		{name: "empty base returns ref unchanged", base: "", ref: "/a", want: "/a"},
+		{name: "empty ref returns ref unchanged", base: "http://example.com/", ref: "", want: ""},
+		{name: "already absolute ref passes through", base: "http://example.com/", ref: "http://other.com/a", want: "http://other.com/a"},
+		{name: "relative ref resolves against base", base: "http://example.com/feed/", ref: "a", want: "http://example.com/feed/a"},
+		{name: "malformed base returns ref unchanged", base: "%zz", ref: "/a", want: "/a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveAtomURL(tc.base, tc.ref); got != tc.want {
+				t.Fatalf("resolveAtomURL(%q, %q) = %q, want %q", tc.base, tc.ref, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseFeed_RSSFallsBackToLinkAndTitleForID(t *testing.T) {
 	// No guid, so the link is used as the ID.
 	data := []byte(`<?xml version="1.0"?>
