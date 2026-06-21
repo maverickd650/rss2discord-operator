@@ -275,6 +275,11 @@ type atomEntry struct {
 	Published  string         `xml:"published"`
 	Author     atomAuthor     `xml:"author"`
 	Categories []atomCategory `xml:"category"`
+	// Base is xml:base, an entry-level override of the feed's Base for
+	// resolving this entry's relative link/enclosure hrefs. encoding/xml
+	// matches "base,attr" by local name regardless of namespace prefix, so
+	// this also covers the attribute written without an "xml:" prefix.
+	Base string `xml:"base,attr"`
 }
 
 type atomAuthor struct {
@@ -322,6 +327,31 @@ func enclosureImage(links []atomLink) string {
 
 type atomFeed struct {
 	Entries []atomEntry `xml:"entry"`
+	// Base is the feed-level xml:base, used to resolve an entry's relative
+	// link/enclosure hrefs when the entry doesn't set its own.
+	Base string `xml:"base,attr"`
+}
+
+// resolveAtomURL resolves ref against base per RFC 3986. Atom commonly
+// supplies relative link hrefs (a bare path/slug) alongside an xml:base
+// rather than a full URL; without resolving against it, the relative
+// string is neither a usable link nor recognized as a URL by anything
+// downstream (e.g. httpURLOrEmpty, or entry-identity normalization) that
+// expects an absolute one. If ref is already absolute, or base is
+// empty/unparseable, ref is returned unchanged.
+func resolveAtomURL(base, ref string) string {
+	if ref == "" || base == "" {
+		return ref
+	}
+	refURL, err := url.Parse(ref)
+	if err != nil || refURL.IsAbs() {
+		return ref
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	return baseURL.ResolveReference(refURL).String()
 }
 
 // trimCategories trims each category and drops any that are blank, so
@@ -413,6 +443,8 @@ func parseAtom(data []byte) ([]Entry, error) {
 		return nil, err
 	}
 
+	feedBase := strings.TrimSpace(feed.Base)
+
 	entries := make([]Entry, 0, len(feed.Entries))
 	for _, item := range feed.Entries {
 		published, _ := parseTime(item.Published)
@@ -420,7 +452,12 @@ func parseAtom(data []byte) ([]Entry, error) {
 			published, _ = parseTime(item.Updated)
 		}
 
-		link := primaryLink(item.Links)
+		base := strings.TrimSpace(item.Base)
+		if base == "" {
+			base = feedBase
+		}
+
+		link := resolveAtomURL(base, primaryLink(item.Links))
 
 		id := strings.TrimSpace(item.ID)
 		if id == "" {
@@ -445,7 +482,7 @@ func parseAtom(data []byte) ([]Entry, error) {
 			Title:       strings.TrimSpace(item.Title),
 			Link:        strings.TrimSpace(link),
 			Description: description,
-			Image:       strings.TrimSpace(enclosureImage(item.Links)),
+			Image:       strings.TrimSpace(resolveAtomURL(base, enclosureImage(item.Links))),
 			Author:      strings.TrimSpace(item.Author.Name),
 			Categories:  trimCategories(categoryTerms),
 			Published:   published,

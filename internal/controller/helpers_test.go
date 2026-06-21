@@ -420,3 +420,42 @@ func TestRenderTemplate_AuthorAndCategories(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderTemplate_StripsHTMLFromTitle(t *testing.T) {
+	tmpl, err := compileTemplate("test", "{{.Title}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry := rss.Entry{Title: "<b>Breaking</b> News &amp; Views"}
+	got, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "Breaking News & Views"; got != want {
+		t.Fatalf("renderTemplate() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildDiscordMessage_EmbedTitleStripsHTML(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	feed := &v1alpha1.FeedSpec{}
+	embedSpec := &v1alpha1.EmbedSpec{Enabled: true}
+
+	descriptionTmpl, err := compileTemplate("description", "", "{{.Description}}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry := rss.Entry{Title: "<b>Breaking</b> News"}
+	msg, err := buildDiscordMessage(feedGroup, embedSpec, nil, descriptionTmpl, nil, feed, entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Embed == nil {
+		t.Fatal("expected an embed to be set")
+	}
+	if want := "Breaking News"; msg.Embed.Title != want {
+		t.Fatalf("msg.Embed.Title = %q, want %q", msg.Embed.Title, want)
+	}
+}

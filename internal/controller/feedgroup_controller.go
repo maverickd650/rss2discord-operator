@@ -754,9 +754,10 @@ var htmlTagRegex = regexp.MustCompile(`<[^>]+>`)
 // stripped) down to a single blank line.
 var blankLineRegex = regexp.MustCompile(`\n{3,}`)
 
-// stripHTML converts an RSS/Atom entry's description into Discord-friendly
-// plain text. Many feeds (e.g. the Guardian's) ship descriptions as raw
-// HTML, which Discord otherwise renders as literal tag soup.
+// stripHTML converts an RSS/Atom entry's title or description into
+// Discord-friendly plain text. Many feeds (e.g. the Guardian's) ship these
+// as raw or escaped HTML, which Discord otherwise renders as literal tag
+// soup.
 func stripHTML(input string) string {
 	text := htmlBlockTagRegex.ReplaceAllString(input, "\n")
 	text = htmlTagRegex.ReplaceAllString(text, "")
@@ -792,7 +793,7 @@ func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, 
 		Author      string
 		Categories  string
 	}{
-		Title:       entry.Title,
+		Title:       stripHTML(entry.Title),
 		Description: stripHTML(entry.Description),
 		Link:        entry.Link,
 		Published:   entry.Published.UTC().Format(time.RFC3339),
@@ -831,7 +832,7 @@ func buildDiscordMessage(
 			return discord.Message{}, err
 		}
 		msg.Embed = &discord.Embed{
-			Title:        truncateMessage(entry.Title, maxEmbedTitleLength),
+			Title:        truncateMessage(stripHTML(entry.Title), maxEmbedTitleLength),
 			Description:  description,
 			URL:          httpURLOrEmpty(entry.Link),
 			Color:        parseHexColor(embedSpec.Color),

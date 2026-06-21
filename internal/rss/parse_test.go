@@ -229,6 +229,69 @@ func TestParseFeed_AtomEntry(t *testing.T) {
 	}
 }
 
+func TestParseFeed_AtomResolvesRelativeLinksAgainstXMLBase(t *testing.T) {
+	// Atom feeds commonly give a relative href for <link> (and an enclosure
+	// image) alongside an xml:base, rather than a full URL. Without
+	// resolving against it, the relative string is unusable as a link and
+	// isn't recognized as a URL by anything downstream that expects an
+	// absolute one.
+	data := []byte(`<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:base="https://example.com/blog/">
+<entry>
+<id>1</id>
+<title>Feed-level base</title>
+<link rel="alternate" href="2026/article-1"/>
+<link rel="enclosure" type="image/jpeg" href="img/1.jpg"/>
+</entry>
+<entry xml:base="https://other.example.com/news/">
+<id>2</id>
+<title>Entry-level base overrides feed-level</title>
+<link rel="alternate" href="article-2"/>
+</entry>
+<entry>
+<id>3</id>
+<title>Already absolute</title>
+<link rel="alternate" href="https://elsewhere.example.com/x"/>
+</entry>
+</feed>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	if want := "https://example.com/blog/2026/article-1"; entries[0].Link != want {
+		t.Fatalf("expected link %q, got %q", want, entries[0].Link)
+	}
+	if want := "https://example.com/blog/img/1.jpg"; entries[0].Image != want {
+		t.Fatalf("expected image %q, got %q", want, entries[0].Image)
+	}
+	if want := "https://other.example.com/news/article-2"; entries[1].Link != want {
+		t.Fatalf("expected entry-level base to override feed-level, got %q", entries[1].Link)
+	}
+	if want := "https://elsewhere.example.com/x"; entries[2].Link != want {
+		t.Fatalf("expected already-absolute link unchanged, got %q", entries[2].Link)
+	}
+}
+
+func TestParseFeed_AtomLeavesRelativeLinkUnchangedWithoutBase(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry><id>1</id><title>No base</title><link rel="alternate" href="/2026/article"/></entry>
+</feed>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "/2026/article"; entries[0].Link != want {
+		t.Fatalf("expected relative link unchanged without xml:base, got %q", entries[0].Link)
+	}
+}
+
 func TestParseFeed_RSSFallsBackToLinkAndTitleForID(t *testing.T) {
 	// No guid, so the link is used as the ID.
 	data := []byte(`<?xml version="1.0"?>
