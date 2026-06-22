@@ -215,12 +215,12 @@ func (r *FeedGroupReconciler) processFeed(
 ) (wantRetry bool, rateLimitRetryAfter time.Duration) {
 	log := logf.FromContext(ctx)
 
-	feedGroup.Status.LastChecked[feed.RSSUrl] = now
 	if _, ok := feedGroup.Status.LastSent[feed.RSSUrl]; !ok {
 		feedGroup.Status.LastSent[feed.RSSUrl] = map[string]string{}
 	}
 
 	if fetchErr != nil {
+		feedGroup.Status.LastChecked[feed.RSSUrl] = now
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
 		feedGroup.Status.LastError[feed.RSSUrl] = fetchErr.Error()
 		feedGroup.Status.RetryCount[feed.RSSUrl]++
@@ -249,11 +249,17 @@ func (r *FeedGroupReconciler) processFeed(
 
 	if fetchResult.NotModified {
 		// A 304 has nothing new to retry, so it's always safe to persist.
+		// LastChecked is deliberately left untouched: nothing about this feed
+		// changed, and requeueWithStatus skips the status write entirely when
+		// the status is unchanged, so bumping a timestamp here would defeat
+		// that and force a write every interval.
 		persistValidators()
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		return false, 0
 	}
+
+	feedGroup.Status.LastChecked[feed.RSSUrl] = now
 
 	entries := fetchResult.Entries
 	if len(entries) == 0 {
