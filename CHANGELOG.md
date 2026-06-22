@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.2...v0.4.3) (2026-06-22)
+
+
+### Bug Fixes
+
+* flag the LastChecked 304 status-write fix for release-please ([#45](https://github.com/maverickd650/rss2discord-operator/issues/45)) ([cc3f1c2](https://github.com/maverickd650/rss2discord-operator/commit/cc3f1c219152b62e6625ada3dc1dc7d64a2cdd77))
+
 ## [0.4.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.1...v0.4.2) (2026-06-21)
 
 
