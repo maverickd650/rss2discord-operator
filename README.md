@@ -190,6 +190,8 @@ mise run lint-fix    # lint with autofix
 mise run test-e2e    # e2e tests, needs a Kind cluster
 ```
 
+Releases are managed by [release-please](https://github.com/googleapis/release-please), which reads the **header line** of each commit on `main` to decide what goes in the changelog. Squash-merging a PR uses the PR title as that header — so when bundling a real fix inside an otherwise-`chore`-typed PR (e.g. a Renovate dependency bump), give the PR a `fix:`-prefixed title, not the bot's default, or the fix silently won't be picked up.
+
 After changing CRD types or RBAC markers:
 
 ```bash
