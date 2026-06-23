@@ -107,6 +107,9 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var feedGroup v1alpha1.FeedGroup
 	if err := r.Get(ctx, req.NamespacedName, &feedGroup); err != nil {
 		if apierrors.IsNotFound(err) {
+			// The FeedGroup is gone; drop its metric series so a deleted
+			// group can't leave a stale feedLastSuccessTimestamp behind.
+			deleteFeedGroupMetrics(req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "failed to get FeedGroup")
@@ -178,7 +181,10 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				ETag:         feedGroup.Status.FeedETag[rssURL],
 				LastModified: feedGroup.Status.FeedLastModified[rssURL],
 			}
+			start := time.Now()
 			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL, validators)
+			feedRequestDuration.WithLabelValues(feedGroup.Namespace, feedGroup.Name, operationFetch).
+				Observe(time.Since(start).Seconds())
 		}(i, feed.RSSUrl)
 	}
 	wg.Wait()
@@ -418,7 +424,11 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			continue
 		}
 
-		if err := discordClient.SendMessage(ctx, discordMessage); err != nil {
+		sendStart := time.Now()
+		err = discordClient.SendMessage(ctx, discordMessage)
+		feedRequestDuration.WithLabelValues(feedGroup.Namespace, feedGroup.Name, operationSend).
+			Observe(time.Since(sendStart).Seconds())
+		if err != nil {
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
 			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
 
@@ -452,6 +462,8 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
+		feedLastSuccessTimestamp.WithLabelValues(feedGroup.Namespace, feedGroup.Name).
+			Set(float64(time.Now().Unix()))
 	}
 
 	return wantRetry, rateLimitRetryAfter
