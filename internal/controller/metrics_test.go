@@ -159,6 +159,37 @@ func TestProcessFeed_SentRecordsDurationAndFreshness(t *testing.T) {
 	}
 }
 
+// TestProcessFeed_QuietFetchAdvancesFreshness asserts that a successful
+// check with nothing new to send -- a 304, or a fetch that returned zero
+// entries -- still advances feedLastSuccessTimestamp. Before this, the gauge
+// only moved on an actual Discord delivery, so a feed that's simply caught up
+// (rather than broken) would eventually trip a staleness alert.
+func TestProcessFeed_QuietFetchAdvancesFreshness(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name        string
+		fetchResult rss.FetchResult
+	}{
+		{name: "not_modified", fetchResult: rss.FetchResult{NotModified: true}},
+		{name: "no_new_entries", fetchResult: rss.FetchResult{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns, name := "metrics-quiet-"+tc.name, "fg-quiet-"+tc.name
+			defer deleteFeedGroupMetrics(ns, name)
+
+			fg, feed := newMetricsFeedGroup(ns, name, "")
+			(&FeedGroupReconciler{}).processFeed(ctx, fg, feed, tc.fetchResult, nil, nil, "2026-01-01T00:00:00Z")
+
+			if got := testutil.ToFloat64(feedLastSuccessTimestamp.WithLabelValues(ns, name)); got <= 0 {
+				t.Fatalf("feedLastSuccessTimestamp = %v, want > 0", got)
+			}
+		})
+	}
+}
+
 // TestFeedRequestDuration_HybridHistogram guards the hybrid exposition
 // config on feedRequestDuration: classic buckets must stay present (so the
 // existing Grafana panels/heatmap keep working unchanged) while the native

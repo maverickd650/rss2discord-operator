@@ -327,8 +327,10 @@ spec:
               lastChecked:
                 additionalProperties:
                   type: string
-                description: LastChecked is a map of feed URL to the last time it
-                  was checked (RFC3339 timestamp).
+                description: |-
+                  LastChecked is a map of feed URL to the last time it was successfully
+                  checked (RFC3339 timestamp). A 304 or a fetch with no new entries still
+                  counts as a successful check; a failed fetch does not advance it.
                 type: object
               lastError:
                 additionalProperties:

@@ -242,7 +242,9 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 
 	if fetchErr != nil {
-		feedGroup.Status.LastChecked[feed.RSSUrl] = now
+		// LastChecked deliberately doesn't advance here: it tracks the last
+		// *successful* check, so a feed stuck failing shows an aging
+		// LastChecked rather than looking freshly checked every retry.
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
 		feedGroup.Status.LastError[feed.RSSUrl] = fetchErr.Error()
 		feedGroup.Status.RetryCount[feed.RSSUrl]++
@@ -270,11 +272,15 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 
 	if fetchResult.NotModified {
-		// A 304 has nothing new to retry, so it's always safe to persist.
-		// LastChecked is deliberately left untouched: nothing about this feed
-		// changed, and requeueWithStatus skips the status write entirely when
-		// the status is unchanged, so bumping a timestamp here would defeat
-		// that and force a write every interval.
+		// A 304 confirms the feed has no new entries, which is just as much a
+		// successful check as one that found something to send -- it
+		// shouldn't read as stale just because nothing changed. This does
+		// give up the optimization of skipping the status write when nothing
+		// else changed (requeueWithStatus diffs on the whole status), so a
+		// quiet feed now costs one status write per poll interval instead of
+		// zero.
+		feedGroup.Status.LastChecked[feed.RSSUrl] = now
+		markFeedCheckSuccess(feedGroup)
 		persistValidators()
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
@@ -282,6 +288,7 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 
 	feedGroup.Status.LastChecked[feed.RSSUrl] = now
+	markFeedCheckSuccess(feedGroup)
 
 	entries := fetchResult.Entries
 	if len(entries) == 0 {
@@ -462,11 +469,19 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		delete(feedGroup.Status.LastError, feed.RSSUrl)
 		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
-		feedLastSuccessTimestamp.WithLabelValues(feedGroup.Namespace, feedGroup.Name).
-			Set(float64(time.Now().Unix()))
 	}
 
 	return wantRetry, rateLimitRetryAfter
+}
+
+// markFeedCheckSuccess records that a feed was successfully checked this
+// reconcile, whether or not it had anything new to send. It's the single
+// place that advances feedLastSuccessTimestamp, so a quiet-but-healthy feed
+// (304, or zero new entries) reads as fresh rather than as if the operator
+// had stopped checking it.
+func markFeedCheckSuccess(feedGroup *v1alpha1.FeedGroup) {
+	feedLastSuccessTimestamp.WithLabelValues(feedGroup.Namespace, feedGroup.Name).
+		Set(float64(time.Now().Unix()))
 }
 
 // recordPersistentFailure emits a Warning Event on feedGroup once a feed's
