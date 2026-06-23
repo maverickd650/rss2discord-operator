@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.1...v0.6.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* freshness tracks last successful check, not last delivery ([#63](https://github.com/maverickd650/rss2discord-operator/issues/63)) ([f03142f](https://github.com/maverickd650/rss2discord-operator/commit/f03142fe80e270e2a65215e02ff5ceba997f4e1d))
+
 ## [0.6.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.0...v0.6.1) (2026-06-23)
 
 
