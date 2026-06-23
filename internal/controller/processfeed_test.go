@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	v1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
@@ -136,6 +137,30 @@ func TestProcessFeed_NotModifiedPersistsLastModified(t *testing.T) {
 	}
 	if got := fg.Status.FeedLastModified[feed.RSSUrl]; got != fetchResult.LastModified {
 		t.Fatalf("FeedLastModified[%q] = %q, want %q", feed.RSSUrl, got, fetchResult.LastModified)
+	}
+}
+
+// TestProcessFeed_LastCheckedTracksSuccessNotAttempts asserts LastChecked
+// advances on a successful check -- including a 304 -- but not on a failed
+// fetch, so it reads as "last time we confirmed this feed's state" rather
+// than "last time we attempted to reach it".
+func TestProcessFeed_LastCheckedTracksSuccessNotAttempts(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "processfeed-lastchecked", "fg-lastchecked"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+
+	(&FeedGroupReconciler{}).processFeed(
+		ctx, fg, feed, rss.FetchResult{}, errors.New("boom"), nil, "2026-01-01T00:00:00Z")
+	if _, ok := fg.Status.LastChecked[feed.RSSUrl]; ok {
+		t.Fatal("expected LastChecked not to be set after a fetch error")
+	}
+
+	(&FeedGroupReconciler{}).processFeed(
+		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, "2026-01-01T00:00:00Z")
+	if got := fg.Status.LastChecked[feed.RSSUrl]; got != "2026-01-01T00:00:00Z" {
+		t.Fatalf("LastChecked after a 304 = %q, want it set to the check time", got)
 	}
 }
 

@@ -171,7 +171,9 @@ type FeedGroupSpec struct {
 
 // FeedGroupStatus defines the observed state of a FeedGroup.
 type FeedGroupStatus struct {
-	// LastChecked is a map of feed URL to the last time it was checked (RFC3339 timestamp).
+	// LastChecked is a map of feed URL to the last time it was successfully
+	// checked (RFC3339 timestamp). A 304 or a fetch with no new entries still
+	// counts as a successful check; a failed fetch does not advance it.
 	// +optional
 	LastChecked map[string]string `json:"lastChecked,omitempty"`
 

@@ -88,15 +88,15 @@ var feedRequestDuration = prometheus.NewHistogramVec(
 )
 
 // feedLastSuccessTimestamp records the Unix time of the most recent
-// successful Discord delivery for a FeedGroup, so freshness can be alerted on
-// as `time() - rss2discord_feed_last_success_timestamp_seconds`. It only
-// advances on an actual delivery, not on an empty/304 check, so it answers
-// "when did this FeedGroup last *post* something" rather than "when was it
-// last reconciled".
+// successful check of any feed in a FeedGroup, so freshness can be alerted on
+// as `time() - rss2discord_feed_last_success_timestamp_seconds`. It advances
+// on any successful fetch -- including a 304 or a fetch with nothing new --
+// not just one that resulted in a Discord delivery, so a quiet-but-healthy
+// feed doesn't look stale just because it has nothing new to post.
 var feedLastSuccessTimestamp = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "rss2discord_feed_last_success_timestamp_seconds",
-		Help: "Unix timestamp of the last successful Discord delivery for this FeedGroup.",
+		Help: "Unix timestamp of the last successful check of this FeedGroup's feeds.",
 	},
 	[]string{labelNamespace, labelName},
 )
@@ -105,7 +105,7 @@ var feedLastSuccessTimestamp = prometheus.NewGaugeVec(
 // exists. Without it a deleted FeedGroup's series linger in the registry
 // until the controller restarts -- harmless for the counters, but actively
 // misleading for feedLastSuccessTimestamp, which would otherwise report a
-// frozen "last delivery" forever and trip any freshness alert built on it.
+// frozen "last checked" forever and trip any freshness alert built on it.
 func deleteFeedGroupMetrics(namespace, name string) {
 	labels := prometheus.Labels{labelNamespace: namespace, labelName: name}
 	feedOperationsTotal.DeletePartialMatch(labels)

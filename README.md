@@ -257,7 +257,7 @@ The controller exports these Prometheus metrics, all labeled by `namespace` and 
 |--------|------|--------------|-------------------|
 | `rss2discord_feed_operations_total` | counter | `outcome` (`sent`, `fetch_error`, `send_error`, `render_error`, `rate_limited`) | Send-success ratios and a per-FeedGroup error breakdown |
 | `rss2discord_feed_request_duration_seconds` | histogram | `operation` (`fetch`, `send`) | Latency of the operator's outbound RSS fetches and Discord sends (e.g. a feed host hanging up to its timeout) |
-| `rss2discord_feed_last_success_timestamp_seconds` | gauge | — | Unix time of the last successful Discord delivery; alert on staleness with `time() - rss2discord_feed_last_success_timestamp_seconds > <window>` |
+| `rss2discord_feed_last_success_timestamp_seconds` | gauge | — | Unix time of the last successful check of this FeedGroup's feeds (a 304 or a fetch with nothing new still counts); alert on staleness with `time() - rss2discord_feed_last_success_timestamp_seconds > <window>` |
 
 Series for a FeedGroup are removed from the registry when that FeedGroup is deleted, so a removed group can't leave a stale freshness reading behind.
 
