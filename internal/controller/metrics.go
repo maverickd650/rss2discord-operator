@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
@@ -67,11 +69,20 @@ const (
 // host that has started hanging up to its timeout. Buckets span the client
 // timeouts (RSS fetch 15s, Discord send 10s); observed on both success and
 // failure, since the latency of a failing request is itself diagnostic.
+//
+// The classic Buckets are kept alongside the Native* fields so this exports
+// as a hybrid histogram: existing consumers (the Grafana panels and heatmap
+// querying ..._bucket/le) see no change, while a Prometheus server that
+// negotiates protobuf and has native histograms enabled also gets the
+// higher-resolution exponential representation for free.
 var feedRequestDuration = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "rss2discord_feed_request_duration_seconds",
-		Help:    "Duration of the operator's outbound HTTP requests, labeled by FeedGroup and operation (fetch/send).",
-		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15},
+		Name:                            "rss2discord_feed_request_duration_seconds",
+		Help:                            "Duration of the operator's outbound HTTP requests, labeled by FeedGroup and operation (fetch/send).",
+		Buckets:                         []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15},
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: time.Hour,
 	},
 	[]string{labelNamespace, labelName, labelOperation},
 )

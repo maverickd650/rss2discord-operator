@@ -159,6 +159,35 @@ func TestProcessFeed_SentRecordsDurationAndFreshness(t *testing.T) {
 	}
 }
 
+// TestFeedRequestDuration_HybridHistogram guards the hybrid exposition
+// config on feedRequestDuration: classic buckets must stay present (so the
+// existing Grafana panels/heatmap keep working unchanged) while the native
+// histogram fields are also populated (so a Prometheus server that enables
+// native histograms benefits without any chart change).
+func TestFeedRequestDuration_HybridHistogram(t *testing.T) {
+	ns, name := "metrics-hybrid", "fg-hybrid"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	feedRequestDuration.WithLabelValues(ns, name, operationFetch).Observe(0.2)
+
+	obs, err := feedRequestDuration.GetMetricWithLabelValues(ns, name, operationFetch)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
+	}
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
+	}
+
+	h := m.GetHistogram()
+	if len(h.GetBucket()) == 0 {
+		t.Fatal("classic buckets missing, want them retained for existing dashboard/heatmap queries")
+	}
+	if h.Schema == nil {
+		t.Fatal("native histogram schema missing, want NativeHistogramBucketFactor to enable it")
+	}
+}
+
 // TestDeleteFeedGroupMetrics confirms a deleted FeedGroup's series are
 // dropped, so a removed group can't leave a stale freshness reading behind.
 func TestDeleteFeedGroupMetrics(t *testing.T) {

@@ -18,6 +18,15 @@ spec:
     path: /metrics
     port: {{ if .Values.metrics.secure }}https{{ else }}http{{ end }}
     scheme: {{ if .Values.metrics.secure }}https{{ else }}http{{ end }}
+    {{- if .Values.prometheus.scrapeNativeHistograms }}
+    scrapeProtocols:
+    - PrometheusProto
+    - OpenMetricsText1.0.0
+    - OpenMetricsText0.0.1
+    - PrometheusText0.0.4
+    scrapeClassicHistograms: true
+    scrapeNativeHistograms: true
+    {{- end }}
     {{- if .Values.metrics.secure }}
     tlsConfig:
       serverName: {{ include "rss2discord-operator.resourceName" (dict "suffix" "metrics" "context" $) }}.{{ .Release.Namespace }}.svc
