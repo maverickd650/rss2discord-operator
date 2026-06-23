@@ -173,10 +173,14 @@ prometheus:
   ## addition to its classic le buckets. The metric is exported in hybrid
   ## form either way; this only controls whether the ServiceMonitor asks
   ## Prometheus to negotiate protobuf and pull the native representation too.
-  ## Requires a recent prometheus-operator (ServiceMonitor scrapeProtocols/
-  ## scrapeNativeHistograms/scrapeClassicHistograms fields) and a Prometheus
-  ## server with native histogram support (stable since v3.8). Safe to leave
-  ## on an older stack: unrecognized fields are pruned by the CRD's schema.
+  ## Requires a recent prometheus-operator (ServiceMonitorSpec scrapeProtocols/
+  ## scrapeNativeHistograms/scrapeClassicHistograms fields, set at the top
+  ## level of spec, not per-endpoint) and a Prometheus server with native
+  ## histogram support (stable since v3.8). On an older prometheus-operator
+  ## whose ServiceMonitor CRD predates these fields, kubectl/Helm's default
+  ## strict field validation will reject the apply with an "unknown field"
+  ## error rather than silently pruning it — set this to false on such a
+  ## cluster instead of relying on pruning.
   scrapeNativeHistograms: true
 
 ## PrometheusRule alerting on the rss2discord_feed_operations_total metric.
