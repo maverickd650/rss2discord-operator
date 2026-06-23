@@ -291,6 +291,69 @@ func TestEntryIdentity_PreservesNonURLGUIDUnchanged(t *testing.T) {
 	}
 }
 
+// TestPruneRemovedFeedStatus asserts every per-feed-URL status map is
+// pruned of entries for a URL no longer in spec, while a URL still in spec
+// is left untouched in every map.
+func TestPruneRemovedFeedStatus(t *testing.T) {
+	const keptURL = "https://example.com/kept.xml"
+	const staleURL = "https://example.com/stale.xml"
+
+	fg := &v1alpha1.FeedGroup{
+		Spec: v1alpha1.FeedGroupSpec{
+			Feeds: []v1alpha1.FeedSpec{{RSSUrl: keptURL}},
+		},
+		Status: v1alpha1.FeedGroupStatus{
+			LastChecked:      map[string]string{keptURL: "x", staleURL: "x"},
+			LastSeenEntry:    map[string]string{keptURL: "x", staleURL: "x"},
+			LastSent:         map[string]map[string]string{keptURL: {}, staleURL: {}},
+			LastError:        map[string]string{keptURL: "x", staleURL: "x"},
+			RetryCount:       map[string]int{keptURL: 1, staleURL: 1},
+			FeedETag:         map[string]string{keptURL: "x", staleURL: "x"},
+			FeedLastModified: map[string]string{keptURL: "x", staleURL: "x"},
+		},
+	}
+
+	pruneRemovedFeedStatus(fg)
+
+	assertPruned := func(mapName string, hasKept, hasStale bool) {
+		t.Helper()
+		if !hasKept {
+			t.Fatalf("%s: expected kept URL to be retained", mapName)
+		}
+		if hasStale {
+			t.Fatalf("%s: expected stale URL to be removed", mapName)
+		}
+	}
+
+	_, keptOK := fg.Status.LastChecked[keptURL]
+	_, staleOK := fg.Status.LastChecked[staleURL]
+	assertPruned("LastChecked", keptOK, staleOK)
+
+	_, keptOK = fg.Status.LastSeenEntry[keptURL]
+	_, staleOK = fg.Status.LastSeenEntry[staleURL]
+	assertPruned("LastSeenEntry", keptOK, staleOK)
+
+	_, keptOK = fg.Status.LastSent[keptURL]
+	_, staleOK = fg.Status.LastSent[staleURL]
+	assertPruned("LastSent", keptOK, staleOK)
+
+	_, keptOK = fg.Status.LastError[keptURL]
+	_, staleOK = fg.Status.LastError[staleURL]
+	assertPruned("LastError", keptOK, staleOK)
+
+	_, keptOK = fg.Status.RetryCount[keptURL]
+	_, staleOK = fg.Status.RetryCount[staleURL]
+	assertPruned("RetryCount", keptOK, staleOK)
+
+	_, keptOK = fg.Status.FeedETag[keptURL]
+	_, staleOK = fg.Status.FeedETag[staleURL]
+	assertPruned("FeedETag", keptOK, staleOK)
+
+	_, keptOK = fg.Status.FeedLastModified[keptURL]
+	_, staleOK = fg.Status.FeedLastModified[staleURL]
+	assertPruned("FeedLastModified", keptOK, staleOK)
+}
+
 func TestCompileFilterRegex(t *testing.T) {
 	t.Run("nil filter yields nil regex", func(t *testing.T) {
 		re, err := compileFilterRegex(nil)
@@ -485,5 +548,45 @@ func TestBuildDiscordMessage_EmbedTitleStripsHTML(t *testing.T) {
 	}
 	if want := "Breaking News"; msg.Embed.Title != want {
 		t.Fatalf("msg.Embed.Title = %q, want %q", msg.Embed.Title, want)
+	}
+}
+
+// TestBuildDiscordMessage_EmbedDescriptionRenderError asserts a description
+// template that parses but fails at execution (referencing a field absent
+// from renderTemplate's render data) surfaces as an error instead of a
+// blank/partial embed.
+func TestBuildDiscordMessage_EmbedDescriptionRenderError(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	feed := &v1alpha1.FeedSpec{}
+	embedSpec := &v1alpha1.EmbedSpec{Enabled: true}
+
+	descriptionTmpl, err := compileTemplate("description", "", "{{.DoesNotExist}}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := buildDiscordMessage(feedGroup, embedSpec, nil, descriptionTmpl, nil, feed, rss.Entry{}); err == nil {
+		t.Fatal("expected an error from a description template that fails at execution")
+	}
+}
+
+// TestBuildDiscordMessage_ForumThreadNameRenderError asserts a forum thread
+// name template that parses but fails at execution surfaces as an error,
+// distinct from the content/description render-error paths.
+func TestBuildDiscordMessage_ForumThreadNameRenderError(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	feed := &v1alpha1.FeedSpec{ForumThreadName: "{{.DoesNotExist}}"}
+
+	contentTmpl, err := compileTemplate("content", "{{.Title}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	threadNameTmpl, err := compileTemplate("threadName", "{{.DoesNotExist}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := buildDiscordMessage(feedGroup, nil, contentTmpl, nil, threadNameTmpl, feed, rss.Entry{}); err == nil {
+		t.Fatal("expected an error from a forum thread name template that fails at execution")
 	}
 }

@@ -30,6 +30,28 @@ func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 	}
 }
 
+func TestFetchEntries_RejectsEmptyURL(t *testing.T) {
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), "   ", CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error for an empty/blank feed URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "feed URL is empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFetchEntries_RejectsUnparsableURL(t *testing.T) {
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), "://bad-url", CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error for an unparsable feed URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid feed URL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestFetchEntries_EnforcesSizeCap(t *testing.T) {
 	oversized := strings.Repeat("a", maxFeedResponseBytes+1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
