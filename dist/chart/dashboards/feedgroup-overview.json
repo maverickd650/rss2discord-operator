@@ -9,10 +9,21 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "enable": true,
+        "expr": "ALERTS{alertname=~\"RSS2DiscordFeedFetchErrors|RSS2DiscordFeedSendErrors|RSS2DiscordFeedRateLimited\", alertstate=\"firing\", namespace=~\"$namespace\", name=~\"$feedgroup\"}",
+        "iconColor": "red",
+        "name": "FeedGroup alerts firing",
+        "step": "10s",
+        "tagKeys": "alertname,namespace,name",
+        "textFormat": "{{namespace}}/{{name}}",
+        "titleFormat": "{{alertname}}"
       }
     ]
   },
-  "description": "Feed fetch/send outcomes, request latency, and delivery freshness for rss2discord-operator, sourced from rss2discord_feed_operations_total, rss2discord_feed_request_duration_seconds, and rss2discord_feed_last_success_timestamp_seconds.",
+  "description": "Executive summary, service health, action-required triage, freshness, latency, and operator (controller-runtime) health for rss2discord-operator, sourced from rss2discord_feed_operations_total, rss2discord_feed_request_duration_seconds, rss2discord_feed_last_success_timestamp_seconds, and controller-runtime/workqueue metrics.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -20,55 +31,15 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "ops/s",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" }
-          },
-          "mappings": [],
-          "unit": "ops"
-        },
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "fetch_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } } ] },
-          { "matcher": { "id": "byName", "options": "send_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } } ] },
-          { "matcher": { "id": "byName", "options": "render_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } } ] },
-          { "matcher": { "id": "byName", "options": "rate_limited" }, "properties": [ { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } } ] },
-          { "matcher": { "id": "byName", "options": "sent" }, "properties": [ { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } } ] }
-        ]
-      },
-      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 1,
-      "options": {
-        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "title": "Feed activity by outcome",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (outcome) (rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
-          "legendFormat": "{{outcome}}",
-          "refId": "A"
-        }
-      ]
+      "panels": [],
+      "title": "Executive Summary",
+      "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -76,9 +47,9 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.9 },
-              { "color": "red", "value": 0.99 }
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.95 },
+              { "color": "green", "value": 0.99 }
             ]
           },
           "unit": "percentunit",
@@ -87,7 +58,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -95,176 +66,710 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto"
+        "textMode": "auto",
+        "showPercentChange": true,
+        "percentChangeColorMode": "standard"
       },
-      "title": "Send success rate",
+      "title": "Send Success Rate (24h)",
       "type": "stat",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=\"sent\"}[$__range])) / clamp_min(sum(increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__range])), 1)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=\"sent\"}[24h])) / clamp_min(sum(increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome!~\"rate_limited\"}[24h])), 1)",
           "refId": "A"
         }
       ]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisLabel": "errors/s",
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": { "group": "A", "mode": "normal" }
-          },
-          "mappings": [],
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
-      "id": 3,
-      "options": {
-        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "title": "Errors & rate limiting by FeedGroup",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (namespace, name, outcome) (rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error|rate_limited\"}[$__rate_interval]))",
-          "legendFormat": "{{namespace}}/{{name}} {{outcome}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": { "id": "byRegexp", "options": ".*error.*|rate_limited" },
-            "properties": [
-              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
-              { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }
-            ]
-          }
-        ]
-      },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
-      "id": 4,
-      "options": {
-        "cellHeight": "sm",
-        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
-        "showHeader": true
-      },
-      "title": "Outcomes by FeedGroup",
-      "type": "table",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (namespace, name, outcome) (increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__range]))",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "groupingToMatrix",
-          "options": { "columnField": "outcome", "rowField": "name", "valueField": "Value" }
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisLabel": "seconds",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "mappings": [],
-          "unit": "s",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
-      "id": 5,
-      "options": {
-        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "title": "Fetch & send latency (p95)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p95",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "custom": { "align": "auto", "cellOptions": { "type": "color-text" }, "inspect": false },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 3600 },
-              { "color": "red", "value": 21600 }
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
             ]
           },
-          "unit": "s"
+          "unit": "short",
+          "min": 0
         },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
-      "id": 6,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 3,
       "options": {
-        "cellHeight": "sm",
-        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
-        "showHeader": true,
-        "sortBy": [ { "displayName": "Value", "desc": true } ]
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "showPercentChange": true,
+        "percentChangeColorMode": "inverted"
       },
-      "title": "Time since last delivery by FeedGroup",
-      "type": "table",
+      "title": "Feeds Failing (30m)",
+      "type": "stat",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "time() - rss2discord_feed_last_success_timestamp_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}",
-          "format": "table",
-          "instant": true,
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count(sum by (namespace, name) (increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error\"}[30m])) > 0)",
           "refId": "A"
         }
-      ],
-      "transformations": [
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "showPercentChange": true,
+        "percentChangeColorMode": "inverted"
+      },
+      "title": "Stale Feeds (>6h)",
+      "type": "stat",
+      "targets": [
         {
-          "id": "organize",
-          "options": { "excludeByName": { "Time": true }, "renameByName": {} }
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count((time() - rss2discord_feed_last_success_timestamp_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}) > 21600)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 5,
+      "title": "Service Health",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisLabel": "error rate",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "mappings": [],
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "error % (yesterday)" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+                  { "id": "custom.fillOpacity", "value": 0 },
+                  { "id": "color", "value": { "fixedColor": "gray", "mode": "fixed" } }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "id": 6,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Error Percentage Trend",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error\"}[$__rate_interval])) / clamp_min(sum(rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])), 0.0001)",
+              "legendFormat": "error %",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error\"}[$__rate_interval] offset 1d)) / clamp_min(sum(rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval] offset 1d)), 0.0001)",
+              "legendFormat": "error % (yesterday)",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "ops/s",
+                "axisPlacement": "auto",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "group": "A", "mode": "none" }
+              },
+              "mappings": [],
+              "unit": "ops"
+            },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "fetch_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } } ] },
+              { "matcher": { "id": "byName", "options": "send_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } } ] },
+              { "matcher": { "id": "byName", "options": "render_error" }, "properties": [ { "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } } ] },
+              { "matcher": { "id": "byName", "options": "rate_limited" }, "properties": [ { "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } } ] },
+              { "matcher": { "id": "byName", "options": "sent" }, "properties": [ { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } } ] }
+            ]
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+          "id": 7,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Feed Activity by Outcome",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (outcome) (rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
+              "legendFormat": "{{outcome}}",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 8,
+      "title": "Action Required",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "unit": "short"
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": ".*error.*" },
+                "properties": [
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+                  { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Total" },
+                "properties": [
+                  { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+                  { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 19 },
+          "id": 9,
+          "options": {
+            "cellHeight": "sm",
+            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+            "showHeader": true,
+            "sortBy": [ { "displayName": "Total", "desc": true } ]
+          },
+          "title": "Failing FeedGroups",
+          "type": "table",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (namespace, name, outcome) (increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error\"}[30m]))",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "groupingToMatrix",
+              "options": { "columnField": "outcome", "rowField": "name", "valueField": "Value" }
+            },
+            {
+              "id": "calculateField",
+              "options": {
+                "alias": "Total",
+                "mode": "reduceRow",
+                "reduce": { "include": ["fetch_error", "send_error", "render_error"], "reducer": "sum" }
+              }
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisLabel": "errors (24h)" },
+              "mappings": [],
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 19 },
+          "id": 10,
+          "options": {
+            "orientation": "horizontal",
+            "showValue": "always",
+            "xTickLabelRotation": 0,
+            "legend": { "showLegend": false }
+          },
+          "title": "Top 10 Erroring Feeds (24h)",
+          "type": "barchart",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "topk(10, sum by (name) (increase(rss2discord_feed_operations_total{namespace=~\"$namespace\", outcome=~\"fetch_error|send_error|render_error\"}[24h])))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "{{name}}",
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "Value": "errors" } } },
+            { "id": "sortBy", "options": { "fields": {}, "sort": [ { "field": "errors", "desc": true } ] } }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "unit": "ops"
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Trend" },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "sparkline",
+                      "drawStyle": "line",
+                      "lineWidth": 1,
+                      "fillOpacity": 15,
+                      "pointSize": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+          "id": 23,
+          "options": {
+            "cellHeight": "sm",
+            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+            "showHeader": true,
+            "sortBy": [ { "displayName": "Trend", "desc": true } ]
+          },
+          "title": "Error Rate Trend by FeedGroup",
+          "description": "Per-FeedGroup error-rate shape over the dashboard time range, via the Time series to table transformation (GA in Grafana 13).",
+          "type": "table",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (name) (rate(rss2discord_feed_operations_total{namespace=~\"$namespace\", name=~\"$feedgroup\", outcome=~\"fetch_error|send_error|render_error\"}[$__rate_interval]))",
+              "legendFormat": "{{name}}",
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            { "id": "timeSeriesTable", "options": {} }
+          ]
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 11,
+      "title": "Feed Freshness",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "custom": { "align": "auto", "cellOptions": { "type": "color-text" }, "inspect": false },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 3600 },
+                  { "color": "red", "value": 21600 }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 29 },
+          "id": 12,
+          "options": {
+            "cellHeight": "sm",
+            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+            "showHeader": true,
+            "sortBy": [ { "displayName": "Age", "desc": true } ]
+          },
+          "title": "Time Since Last Delivery",
+          "type": "table",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "time() - rss2discord_feed_last_success_timestamp_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": { "Time": true },
+                "renameByName": { "Value": "Age" },
+                "indexByName": { "namespace": 0, "name": 1, "Age": 2 }
+              }
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 3600 },
+                  { "color": "red", "value": 21600 }
+                ]
+              },
+              "unit": "s",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 29 },
+          "id": 13,
+          "options": {
+            "displayMode": "gradient",
+            "orientation": "horizontal",
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "showUnfilled": true
+          },
+          "title": "Freshness Distribution",
+          "type": "bargauge",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "time() - rss2discord_feed_last_success_timestamp_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}",
+              "legendFormat": "{{name}}",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "id": 14,
+      "title": "Performance",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisLabel": "seconds",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "mappings": [],
+              "unit": "s",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 39 },
+          "id": 15,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Fetch & Send Latency (p50/p95/p99)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p50",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p95",
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p99",
+              "refId": "C"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": { "custom": { "scaleDistribution": { "type": "linear" } }, "unit": "s" },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 39 },
+          "id": 16,
+          "options": {
+            "calculate": false,
+            "color": { "mode": "scheme", "scheme": "Spectral", "steps": 64 },
+            "yAxis": { "unit": "s" }
+          },
+          "title": "Latency Heatmap",
+          "type": "heatmap",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (le) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
+              "format": "heatmap",
+              "legendFormat": "{{le}}",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "id": 17,
+      "title": "Operator Health",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 49 },
+          "id": 18,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "showPercentChange": true,
+            "percentChangeColorMode": "inverted"
+          },
+          "title": "Reconcile Errors",
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(controller_runtime_reconcile_errors_total{controller=\"feedgroup\"})",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisLabel": "reconciles/s", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+              "mappings": [],
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 49 },
+          "id": 19,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Reconcile Rate",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (result) (rate(controller_runtime_reconcile_total{controller=\"feedgroup\"}[$__rate_interval]))",
+              "legendFormat": "{{result}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisLabel": "queue depth", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+              "mappings": [],
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 49 },
+          "id": 20,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Workqueue Depth",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(workqueue_depth{controller=\"feedgroup\"})",
+              "legendFormat": "feedgroup",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisLabel": "retries/s", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+              "mappings": [],
+              "unit": "ops",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 57 },
+          "id": 21,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Workqueue Retries",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(rate(workqueue_retries_total{controller=\"feedgroup\"}[$__rate_interval]))",
+              "legendFormat": "feedgroup",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 57 },
+          "id": 22,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto"
+          },
+          "title": "Operator Availability (active workers)",
+          "type": "stat",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(controller_runtime_active_workers{controller=\"feedgroup\"})",
+              "refId": "A"
+            }
+          ]
         }
       ]
     }
@@ -276,18 +781,7 @@
     "list": [
       {
         "current": {},
-        "hide": 0,
-        "includeAll": false,
-        "label": "Data source",
-        "name": "datasource",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "type": "datasource"
-      },
-      {
-        "current": {},
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "definition": "label_values(rss2discord_feed_operations_total, namespace)",
         "hide": 0,
         "includeAll": true,
@@ -301,7 +795,7 @@
       },
       {
         "current": {},
-        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "definition": "label_values(rss2discord_feed_operations_total{namespace=~\"$namespace\"}, name)",
         "hide": 0,
         "includeAll": true,
@@ -320,6 +814,6 @@
   "timezone": "",
   "title": "rss2discord-operator — FeedGroups",
   "uid": "rss2discord-feedgroups",
-  "version": 1,
+  "version": 5,
   "weekStart": ""
 }

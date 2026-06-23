@@ -267,7 +267,7 @@ The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`
 |-------|---------|--------------|
 | `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
 | `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per FeedGroup. Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
-| `grafanaDashboard.enabled` | `false` | Ships a Grafana dashboard (outcome rates, send-success rate, per-FeedGroup error breakdown, fetch/send latency, and time-since-last-delivery) as a ConfigMap discovered by the Grafana dashboard sidecar. Tune the sidecar discovery label with `grafanaDashboard.sidecarLabel` / `.sidecarLabelValue` |
+| `grafanaDashboard.enabled` | `false` | Ships a ConfigMap holding the dashboard JSON plus a `GrafanaDashboard` custom resource for the [grafana-operator](https://github.com/grafana/grafana-operator) (referencing it via `configMapRef`), with rows for executive summary (success rate, failing/stale feed counts), service health, action-required triage (failing FeedGroups, top erroring feeds), feed freshness, fetch/send latency (p50/p95/p99 + heatmap), and operator (controller-runtime/workqueue) health. Target a specific Grafana instance with `grafanaDashboard.instanceSelector`; the dashboard's `${DS_PROMETHEUS}` placeholder is resolved to a real datasource via `grafanaDashboard.datasources` |
 
 ```bash
 helm install rss2discord-operator ./dist/chart \
@@ -276,6 +276,25 @@ helm install rss2discord-operator ./dist/chart \
   --set prometheusRule.enabled=true \
   --set grafanaDashboard.enabled=true
 ```
+
+`grafanaDashboard.enabled=true` on its own assumes:
+- the [grafana-operator](https://github.com/grafana/grafana-operator) is installed in the cluster (its `GrafanaDashboard` CRD must exist), and
+- it manages a `Grafana` CR with a datasource named `prometheus` in it.
+
+If either isn't true, override these on install:
+
+```bash
+helm install rss2discord-operator ./dist/chart \
+  --namespace rss2discord-operator-system --create-namespace \
+  --set grafanaDashboard.enabled=true \
+  --set grafanaDashboard.instanceSelector.matchLabels.dashboards=grafana \
+  --set 'grafanaDashboard.datasources[0].inputName=DS_PROMETHEUS' \
+  --set 'grafanaDashboard.datasources[0].datasourceName=my-prometheus-datasource-name'
+```
+
+- `grafanaDashboard.instanceSelector` must match the labels on the `Grafana` CR(s) you want this dashboard synced into — left empty (the default), it matches every `Grafana` CR the operator manages, which is fine with a single instance.
+- `grafanaDashboard.datasources` resolves the dashboard's `${DS_PROMETHEUS}` placeholder to a real datasource: the operator does a literal text substitution of `${inputName}` → `datasourceName` in the dashboard JSON before pushing it to Grafana, so `datasourceName` must be the **name** of an existing datasource in your Grafana instance, not its UID.
+- If your `Grafana` CR lives in a different namespace than this release, `grafanaDashboard.allowCrossNamespaceImport` (default `true`) is what lets the operator's `GrafanaDashboard` controller, running wherever it runs, pick up the `ConfigMap`/CR pair from this release's namespace.
 
 The dashboard JSON lives at [`dist/chart/dashboards/feedgroup-overview.json`](dist/chart/dashboards/feedgroup-overview.json) if you'd rather import it manually.
 

@@ -188,20 +188,42 @@ prometheusRule:
   ##
   # labels: {}
 
-## Grafana dashboard for the rss2discord_feed_operations_total metric.
-## Rendered as a ConfigMap discovered by the Grafana dashboard sidecar.
+## Grafana dashboard for rss2discord-operator's feed metrics.
+## Rendered as a GrafanaDashboard custom resource for the grafana-operator
+## (https://github.com/grafana/grafana-operator), which syncs it into any
+## matching Grafana instance.
 ##
 grafanaDashboard:
   enabled: false
-  ## Namespace for the ConfigMap (defaults to the release namespace).
-  ## Set this if your Grafana sidecar only watches a specific namespace.
+  ## Namespace for the ConfigMap and GrafanaDashboard CR (defaults to the
+  ## release namespace).
   ##
   # namespace: ""
-  ## Label/value the Grafana sidecar uses to discover dashboards
+  ## Lets the GrafanaDashboard CR (in this release's namespace) be picked up
+  ## by a Grafana CR in a different namespace.
   ##
-  sidecarLabel: grafana_dashboard
-  sidecarLabelValue: "1"
-  ## Extra labels and annotations added to the ConfigMap
+  allowCrossNamespaceImport: true
+  ## Label selector matching the target Grafana custom resource(s). Left
+  ## empty (the default), the grafana-operator matches every Grafana CR it
+  ## manages.
+  ##
+  instanceSelector:
+    matchLabels: {}
+  ## How often the operator re-syncs this dashboard into Grafana.
+  ##
+  resyncPeriod: 30s
+  ## Grafana folder to file the dashboard under. Leave unset for the default
+  ## folder.
+  ##
+  # folder: ""
+  ## Maps the dashboard's ${DS_PROMETHEUS} placeholder to a real datasource,
+  ## by name, before the operator pushes the dashboard into Grafana. Adjust
+  ## datasourceName to match your Prometheus datasource's name in Grafana.
+  ##
+  datasources:
+    - inputName: DS_PROMETHEUS
+      datasourceName: prometheus
+  ## Extra labels and annotations added to the ConfigMap and GrafanaDashboard CR
   ##
   # labels: {}
   # annotations: {}
