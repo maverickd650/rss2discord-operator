@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.3...v0.5.0) (2026-06-23)
+
+
+### Features
+
+* add request latency and delivery freshness metrics ([#50](https://github.com/maverickd650/rss2discord-operator/issues/50)) ([503d475](https://github.com/maverickd650/rss2discord-operator/commit/503d47565617ede56bd3e2ffd85a3a2121578baa))
+
+
+### Bug Fixes
+
+* deliver newest entries for date-less feeds and harden rate-limit/status handling ([#48](https://github.com/maverickd650/rss2discord-operator/issues/48)) ([8adaa4f](https://github.com/maverickd650/rss2discord-operator/commit/8adaa4f967a18b11ac474246558a8e68d008f18b))
+
 ## [0.4.3](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.2...v0.4.3) (2026-06-22)
 
 
