@@ -772,6 +772,89 @@
           ]
         }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "id": 24,
+      "title": "Performance (Native Histograms)",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Same latency data as \"Fetch & Send Latency (p50/p95/p99)\", computed from the native histogram representation of rss2discord_feed_request_duration_seconds instead of the classic le buckets. Requires the Prometheus server scraping this operator to have scrapeNativeHistograms enabled.",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisLabel": "seconds",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "mappings": [],
+              "unit": "s",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 67 },
+          "id": 25,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Fetch & Send Latency (p50/p95/p99) — Native Histogram",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.50, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p50",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.95, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p95",
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.99, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{operation}} p99",
+              "refId": "C"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Native-histogram equivalent of \"Latency Heatmap\". The Heatmap panel renders the native histogram value type directly, so the query is a plain rate() with no le grouping and no format=heatmap.",
+          "fieldConfig": {
+            "defaults": { "custom": { "scaleDistribution": { "type": "linear" } }, "unit": "s" },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 67 },
+          "id": 26,
+          "options": {
+            "calculate": false,
+            "color": { "mode": "scheme", "scheme": "Spectral", "steps": 64 },
+            "yAxis": { "unit": "s" }
+          },
+          "title": "Latency Heatmap — Native Histogram",
+          "type": "heatmap",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
+              "legendFormat": "latency",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -814,6 +897,6 @@
   "timezone": "",
   "title": "rss2discord-operator — FeedGroups",
   "uid": "rss2discord-feedgroups",
-  "version": 5,
+  "version": 6,
   "weekStart": ""
 }

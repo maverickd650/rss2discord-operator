@@ -261,13 +261,16 @@ The controller exports these Prometheus metrics, all labeled by `namespace` and 
 
 Series for a FeedGroup are removed from the registry when that FeedGroup is deleted, so a removed group can't leave a stale freshness reading behind.
 
+`rss2discord_feed_request_duration_seconds` is exposed as a hybrid classic+native histogram: the classic buckets that the bundled dashboard queries are unchanged, and with `prometheus.scrapeNativeHistograms` (default `true`, requires `prometheus.enabled`) the `ServiceMonitor` additionally asks Prometheus to negotiate protobuf and scrape the higher-resolution native representation alongside the classic one. The Grafana dashboard ships a second "Performance (Native Histograms)" row with native-histogram equivalents of the latency timeseries and heatmap panels, so both representations are visible side by side. Set `prometheus.scrapeNativeHistograms=false` to scrape classic buckets only (e.g. on a Prometheus older than v3.8, or one without native histograms enabled).
+
 The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`). The remaining pieces are opt-in via chart values and each requires the relevant operator to be installed in the cluster:
 
 | Value | Default | What it does |
 |-------|---------|--------------|
 | `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
+| `prometheus.scrapeNativeHistograms` | `true` | With `prometheus.enabled`, has the `ServiceMonitor` negotiate protobuf and scrape `rss2discord_feed_request_duration_seconds` as a native histogram in addition to its classic buckets |
 | `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per FeedGroup. Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
-| `grafanaDashboard.enabled` | `false` | Ships a ConfigMap holding the dashboard JSON plus a `GrafanaDashboard` custom resource for the [grafana-operator](https://github.com/grafana/grafana-operator) (referencing it via `configMapRef`), with rows for executive summary (success rate, failing/stale feed counts), service health, action-required triage (failing FeedGroups, top erroring feeds), feed freshness, fetch/send latency (p50/p95/p99 + heatmap), and operator (controller-runtime/workqueue) health. Target a specific Grafana instance with `grafanaDashboard.instanceSelector`; the dashboard's `${DS_PROMETHEUS}` placeholder is resolved to a real datasource via `grafanaDashboard.datasources` |
+| `grafanaDashboard.enabled` | `false` | Ships a ConfigMap holding the dashboard JSON plus a `GrafanaDashboard` custom resource for the [grafana-operator](https://github.com/grafana/grafana-operator) (referencing it via `configMapRef`), with rows for executive summary (success rate, failing/stale feed counts), service health, action-required triage (failing FeedGroups, top erroring feeds), feed freshness, fetch/send latency (p50/p95/p99 + heatmap), native-histogram equivalents of the latency panels, and operator (controller-runtime/workqueue) health. Target a specific Grafana instance with `grafanaDashboard.instanceSelector`; the dashboard's `${DS_PROMETHEUS}` placeholder is resolved to a real datasource via `grafanaDashboard.datasources` |
 
 ```bash
 helm install rss2discord-operator ./dist/chart \
