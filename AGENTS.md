@@ -34,6 +34,22 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 6. Fix `path` in `PROJECT` file for each resource
 7. Update test suite CRD paths (add one more `..` to relative paths)
 
+## This Project
+
+rss2discord-operator watches RSS/Atom feeds described by `FeedGroup` custom resources and posts new entries to Discord via incoming webhooks. Each reconcile fetches every feed in a group, filters/templates/renders new entries into Discord messages, and tracks per-feed-URL delivery state (`LastSeenEntry`, `LastSent`, `RetryCount`, conditional-GET validators, etc.) in `FeedGroup.Status`.
+
+Three internal packages do the real work:
+- `internal/rss` — fetches and parses feeds (conditional GET via ETag/Last-Modified, response-size cap).
+- `internal/discord` — sends webhook messages (message building, rate-limit/error handling, content sanitization).
+- `internal/controller` — the `FeedGroupReconciler`: orchestrates fetch → filter → template → send → status for each `FeedGroup`, plus the Prometheus metrics in `metrics.go`.
+
+**SSRF guards — do not weaken or duplicate these.** Both outbound paths are deliberately locked down because `FeedGroup.Spec` (RSS URLs) and the webhook secret are user-supplied input that could otherwise be used to probe internal networks:
+- `internal/rss/client.go`'s `newDefaultHTTPClient` dials through a custom `DialContext` that resolves the host and checks every resulting IP with `isPublicIP`, rejecting loopback, link-local, private, unspecified, multicast, and CGNAT ranges before connecting.
+- `internal/discord/client.go` only sends to hosts in `AllowedWebhookHosts` (Discord's own webhook domains) over HTTPS — this blocks both SSRF and webhook-URL domain confusion.
+- Tests that need to hit local `httptest` servers must use the unguarded client/host registration helpers in `internal/controller/feedgroup_controller_test.go` (`testRSSClient()`, `discord.AllowedWebhookHosts[...] = true`) rather than weakening the production guards.
+
+**Metrics use an outcome-label model**, defined in `internal/controller/metrics.go`: every feed fetch/send attempt increments `feedOperationsTotal` with exactly one `outcome` label (`outcomeSent`, `outcomeFetchError`, `outcomeSendError`, `outcomeRenderError`, `outcomeRateLimited`). Adding a new failure mode means adding a new `outcome*` constant and an `.Inc()` call at the point it's detected — the Grafana dashboard (`dist/chart/dashboards/feedgroup-overview.json`) and the PrometheusRule alerts both key off these labels, so a new outcome should usually get a corresponding dashboard panel/alert too.
+
 ## Critical Rules
 
 ### Never Edit These (Auto-Generated)

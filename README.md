@@ -4,7 +4,7 @@
 
 A Kubernetes operator that watches RSS feeds and posts new entries to Discord via webhooks. Feeds are configured declaratively with a `FeedGroup` custom resource.
 
-> **Note:** This project is vibecoded — built quickly with heavy AI assistance, not deeply hardened or extensively reviewed. It works for personal/small-scale use, but read the code before trusting it with anything important.
+> **Note:** This project is vibecoded — built quickly with heavy AI assistance. It does include specific hardening (SSRF guards on both the RSS fetch and Discord webhook paths, a response-size cap, `@everyone`/`@here` mention suppression, `javascript:`/`data:` URI stripping on embed URLs, and Discord API length clamping), but it hasn't had a third-party security review, so read the code before trusting it with anything important.
 
 ## Features
 

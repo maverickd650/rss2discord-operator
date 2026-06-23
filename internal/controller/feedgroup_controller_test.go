@@ -1390,6 +1390,100 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(updated.Status.RetryCount[rssServer.URL()]).To(Equal(2))
 			Eventually(recorder.Events).Should(Receive(ContainSubstring("RenderFailed")))
 		})
+
+		It("should retry then give up on a persistently failing send, instead of retrying forever", func() {
+			const feedGroupName = "test-feedgroup-send-error"
+
+			By("Creating a mock Discord server that always fails the send with a non-rate-limit error")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+			discordServer.FailNextRequests(2, http.StatusInternalServerError)
+
+			By("Creating a mock RSS feed server with one entry")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Send Error Article",
+					description: "Should never be delivered",
+					link:        "https://example.com/send-error-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "send-error-article",
+				},
+			))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-send-error",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte(discordServer.URL()),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-send-error"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "1m",
+					Retries:       2,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			recorder := events.NewFakeRecorder(10)
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+				Recorder:             recorder,
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the send error is tracked and counted toward retries")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastError).To(HaveKey(rssServer.URL()))
+			Expect(updated.Status.RetryCount[rssServer.URL()]).To(Equal(1))
+			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
+
+			By("Reconciling again to exhaust the configured retries")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying a persistent-failure Event was recorded once retries were exhausted, instead of retrying forever")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.RetryCount[rssServer.URL()]).To(Equal(2))
+			Expect(discordServer.MessageCount()).To(Equal(0))
+			Eventually(recorder.Events).Should(Receive(ContainSubstring("SendFailed")))
+		})
 	})
 
 	Describe("Filtering", func() {
