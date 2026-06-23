@@ -1213,6 +1213,99 @@ var _ = Describe("FeedGroup Controller", func() {
 			updated := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupNameNoSecret, Namespace: namespace}, updated)).To(Succeed())
 		})
+
+		It("should handle a webhook secret whose value is blank", func() {
+			const feedGroupName = "test-feedgroup-blank-secret-value"
+
+			By("Creating a secret whose key holds only whitespace")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-blank-value",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{secretURLKey: []byte("   ")},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-blank-value"},
+						Key:                  secretURLKey,
+					},
+					Interval: defaultInterval,
+					Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: exampleFeedURL}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				RSSClient: testRSSClient(),
+			}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			By("Verifying the webhook error was recorded and the Ready condition reflects it")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastError).To(HaveKeyWithValue("webhook", ContainSubstring("empty")))
+			readyCondition := apimeta.FindStatusCondition(updated.Status.Conditions, rss2discordv1alpha1.ConditionTypeReady)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("should handle a webhook secret missing the configured key", func() {
+			const feedGroupName = "test-feedgroup-secret-missing-key"
+
+			By("Creating a secret that does not contain the configured key")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-missing-key",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{"wrong-key": []byte("https://discord.com/api/webhooks/12345/abcde")},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-missing-key"},
+						Key:                  secretURLKey,
+					},
+					Interval: defaultInterval,
+					Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: exampleFeedURL}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation")
+			reconciler := &FeedGroupReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				RSSClient: testRSSClient(),
+			}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			By("Verifying the missing-key error was recorded on status")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastError).To(HaveKeyWithValue("webhook", ContainSubstring("missing key")))
+		})
 	})
 
 	Describe("RSS error handling", func() {
@@ -2244,6 +2337,98 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(discordServer.DeliveryAttempts()).To(Equal(1))
 			Expect(discordServer.MessageCount()).To(Equal(0))
 			Expect(result.RequeueAfter).To(Equal(2 * time.Second))
+		})
+
+		It("should stop processing the rest of a FeedGroup's feeds once one feed's send is rate-limited", func() {
+			const feedGroupName = "test-feedgroup-rate-limited-multi-feed"
+
+			By("Creating a mock Discord server that rate-limits the very first delivery")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+			discordServer.FailNextRequestsRateLimited(1, "3")
+
+			By("Creating two mock RSS feed servers, each with one entry")
+			firstFeed := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "First Feed Article",
+					description: "Triggers the rate limit",
+					link:        "https://example.com/first-feed-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "first-feed-article",
+				},
+			))
+			defer firstFeed.Close()
+			secondFeed := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Second Feed Article",
+					description: "Should not be reached this reconcile",
+					link:        "https://example.com/second-feed-article",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "second-feed-article",
+				},
+			))
+			defer secondFeed.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "discord-webhook-rl-multi-feed", Namespace: namespace},
+				Data:       map[string][]byte{secretURLKey: []byte(discordServer.URL())},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating a FeedGroup with both feeds, first feed listed first")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rl-multi-feed"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: firstFeed.URL()},
+						{RSSUrl: secondFeed.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running reconciliation")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the second feed was fetched concurrently but never processed/sent, since the shared webhook was already rate-limited")
+			Expect(discordServer.MessageCount()).To(Equal(0))
+
+			By("Verifying the reconcile requeues after the rate limit's Retry-After duration")
+			Expect(result.RequeueAfter).To(Equal(3 * time.Second))
+
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.Status.LastChecked).To(HaveKey(firstFeed.URL()))
+			Expect(updated.Status.LastChecked).NotTo(HaveKey(secondFeed.URL()))
 		})
 	})
 

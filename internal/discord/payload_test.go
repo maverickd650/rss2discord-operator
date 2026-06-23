@@ -10,6 +10,26 @@ import (
 	"time"
 )
 
+func TestDecodeErrorDetail(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty body", body: "", want: ""},
+		{name: "empty object", body: `{}`, want: ""},
+		{name: "message only", body: `{"message":"invalid webhook token"}`, want: ": invalid webhook token"},
+		{name: "code and message", body: `{"message":"Unknown Webhook","code":10015}`, want: ": Unknown Webhook (code 10015)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := decodeErrorDetail(strings.NewReader(tc.body)); got != tc.want {
+				t.Fatalf("decodeErrorDetail(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 // fiveRunes is reused across the truncateRunes test cases below.
 const fiveRunes = "abcde"
 
