@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -204,12 +205,33 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var responseBody map[string]any
-		_ = json.NewDecoder(resp.Body).Decode(&responseBody)
-		return fmt.Errorf("discord webhook returned %s", resp.Status)
+		return fmt.Errorf("discord webhook returned %s%s", resp.Status, decodeErrorDetail(resp.Body))
 	}
 
 	return nil
+}
+
+// decodeErrorDetail extracts Discord's machine-readable error code/message
+// from an error response body so the surfaced error (and the FeedGroup's
+// LastError/Event) says *why* a send failed -- "invalid webhook token" rather
+// than a bare "400 Bad Request". Discord error bodies look like
+// {"message":"...","code":50027,...}. Returns "" (so the caller's status line
+// stands alone) when the body is empty or not the expected shape.
+func decodeErrorDetail(body io.Reader) string {
+	var parsed struct {
+		Message string `json:"message"`
+		Code    int    `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 4096)).Decode(&parsed); err != nil {
+		return ""
+	}
+	if parsed.Message == "" && parsed.Code == 0 {
+		return ""
+	}
+	if parsed.Code != 0 {
+		return fmt.Sprintf(": %s (code %d)", parsed.Message, parsed.Code)
+	}
+	return fmt.Sprintf(": %s", parsed.Message)
 }
 
 // SendMessageText is a convenience wrapper around SendMessage for plain,

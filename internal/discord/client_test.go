@@ -215,6 +215,47 @@ func TestSendMessage_SetsThreadIDQueryParamForExistingThread(t *testing.T) {
 	}
 }
 
+func TestSendMessage_SurfacesDiscordErrorDetail(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Invalid Webhook Token","code":50027}`))
+	}))
+	defer srv.Close()
+
+	AllowedWebhookHosts["127.0.0.1"] = true
+	defer delete(AllowedWebhookHosts, "127.0.0.1")
+
+	c := NewClientWithHTTP(srv.URL, srv.Client())
+	err := c.SendMessageText(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected error for 400 response, got nil")
+	}
+	for _, want := range []string{"400", "Invalid Webhook Token", "50027"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %q", want, err.Error())
+		}
+	}
+}
+
+func TestSendMessage_ErrorWithoutBodyStillReturnsStatus(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	AllowedWebhookHosts["127.0.0.1"] = true
+	defer delete(AllowedWebhookHosts, "127.0.0.1")
+
+	c := NewClientWithHTTP(srv.URL, srv.Client())
+	err := c.SendMessageText(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected error for 500 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected error to contain status 500, got %q", err.Error())
+	}
+}
+
 func TestSendMessage_RespectsTimeout(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)

@@ -337,6 +337,42 @@ func TestParseFeed_RSSFallsBackToLinkAndTitleForID(t *testing.T) {
 	}
 }
 
+func TestParseFeed_AssignsDocumentOrderSeq(t *testing.T) {
+	// Seq must reflect each entry's position in the feed (0 = first listed),
+	// for both RSS and Atom, so the consumer can fall back to document order
+	// when entries carry no usable publish date.
+	rssData := []byte(`<?xml version="1.0"?>
+<rss><channel>
+<item><title>First</title></item>
+<item><title>Second</title></item>
+<item><title>Third</title></item>
+</channel></rss>`)
+	rssEntries, err := parseFeed(rssData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i, e := range rssEntries {
+		if e.Seq != i {
+			t.Fatalf("rss entry %q: expected Seq %d, got %d", e.Title, i, e.Seq)
+		}
+	}
+
+	atomData := []byte(`<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>First</title></entry>
+<entry><title>Second</title></entry>
+</feed>`)
+	atomEntries, err := parseFeed(atomData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i, e := range atomEntries {
+		if e.Seq != i {
+			t.Fatalf("atom entry %q: expected Seq %d, got %d", e.Title, i, e.Seq)
+		}
+	}
+}
+
 func TestParseFeed_InvalidXML(t *testing.T) {
 	if _, err := parseFeed([]byte("<not-closed")); err == nil {
 		t.Fatal("expected error for malformed XML, got nil")

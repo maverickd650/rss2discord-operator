@@ -11,6 +11,7 @@ import (
 
 // shortContent is reused across truncation test cases below.
 const shortContent = "short"
+const truncateMe = "truncate me"
 
 // excerptText is reused across the "continue reading" stripHTML test cases
 // below.
@@ -110,8 +111,11 @@ func TestTruncateMessage(t *testing.T) {
 	}{
 		{name: "under limit unchanged", content: shortContent, max: 10, want: shortContent},
 		{name: "exactly at limit unchanged", content: shortContent, max: 5, want: shortContent},
-		{name: "truncated with ellipsis", content: "truncate me", max: 5, want: "trun…"},
+		{name: "truncated with ellipsis", content: truncateMe, max: 5, want: "trun…"},
 		{name: "multibyte trimmed by rune", content: "日本語テスト", max: 3, want: "日本…"},
+		{name: "max one keeps single rune without ellipsis", content: truncateMe, max: 1, want: "t"},
+		{name: "max zero yields empty", content: truncateMe, max: 0, want: ""},
+		{name: "negative max yields empty", content: truncateMe, max: -5, want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

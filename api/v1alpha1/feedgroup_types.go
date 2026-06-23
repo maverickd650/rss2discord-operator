@@ -69,6 +69,7 @@ type EmbedSpec struct {
 type FeedSpec struct {
 	// RSSUrl is the URL of the RSS feed to fetch. Only http:// and https:// are supported.
 	// +kubebuilder:validation:Pattern=`^https?://`
+	// +kubebuilder:validation:MaxLength=2048
 	RSSUrl string `json:"rssUrl"`
 
 	// Filter defines how to filter entries from this feed.
@@ -151,8 +152,11 @@ type FeedGroupSpec struct {
 	// Feeds is the list of RSS feed configurations in this group. Capped at
 	// maxConcurrentFetches (see feedgroup_controller.go) so a single
 	// reconcile can't fan out an unbounded number of simultaneous outbound
-	// fetches.
+	// fetches. RSS URLs must be unique within a group, since all per-feed
+	// status (LastSeenEntry, LastSent, ETag, ...) is keyed by URL: two feeds
+	// sharing a URL would silently clobber each other's status.
 	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:XValidation:rule="self.all(f, self.exists_one(g, g.rssUrl == f.rssUrl))",message="each feed's rssUrl must be unique within a FeedGroup"
 	Feeds []FeedSpec `json:"feeds"`
 
 	// CatchUpLimit caps how many backlog entries are sent to Discord the
