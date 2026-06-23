@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.0...v0.6.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **chart:** move ServiceMonitor native histogram fields to spec top level ([#61](https://github.com/maverickd650/rss2discord-operator/issues/61)) ([a8cb30b](https://github.com/maverickd650/rss2discord-operator/commit/a8cb30b18c4beed468c1d74648739dfab57b60f9))
+
 ## [0.6.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.5.0...v0.6.0) (2026-06-23)
 
 
