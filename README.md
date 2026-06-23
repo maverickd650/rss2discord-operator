@@ -251,7 +251,15 @@ helm uninstall rss2discord-operator -n rss2discord-operator-system
 
 ## Observability
 
-The controller exports a Prometheus counter, `rss2discord_feed_operations_total`, labeled by `namespace`, `name` (the FeedGroup), and `outcome`. Outcomes are `sent`, `fetch_error`, `send_error`, `render_error`, and `rate_limited`, so you can track send-success ratios and break errors down per FeedGroup.
+The controller exports these Prometheus metrics, all labeled by `namespace` and `name` (the FeedGroup):
+
+| Metric | Type | Extra labels | What it tells you |
+|--------|------|--------------|-------------------|
+| `rss2discord_feed_operations_total` | counter | `outcome` (`sent`, `fetch_error`, `send_error`, `render_error`, `rate_limited`) | Send-success ratios and a per-FeedGroup error breakdown |
+| `rss2discord_feed_request_duration_seconds` | histogram | `operation` (`fetch`, `send`) | Latency of the operator's outbound RSS fetches and Discord sends (e.g. a feed host hanging up to its timeout) |
+| `rss2discord_feed_last_success_timestamp_seconds` | gauge | — | Unix time of the last successful Discord delivery; alert on staleness with `time() - rss2discord_feed_last_success_timestamp_seconds > <window>` |
+
+Series for a FeedGroup are removed from the registry when that FeedGroup is deleted, so a removed group can't leave a stale freshness reading behind.
 
 The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`). The remaining pieces are opt-in via chart values and each requires the relevant operator to be installed in the cluster:
 
@@ -259,7 +267,7 @@ The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`
 |-------|---------|--------------|
 | `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
 | `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per FeedGroup. Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
-| `grafanaDashboard.enabled` | `false` | Ships a Grafana dashboard (outcome rates, send-success ratio, per-FeedGroup error breakdown) as a ConfigMap discovered by the Grafana dashboard sidecar. Tune the sidecar discovery label with `grafanaDashboard.sidecarLabel` / `.sidecarLabelValue` |
+| `grafanaDashboard.enabled` | `false` | Ships a Grafana dashboard (outcome rates, send-success rate, per-FeedGroup error breakdown, fetch/send latency, and time-since-last-delivery) as a ConfigMap discovered by the Grafana dashboard sidecar. Tune the sidecar discovery label with `grafanaDashboard.sidecarLabel` / `.sidecarLabelValue` |
 
 ```bash
 helm install rss2discord-operator ./dist/chart \
