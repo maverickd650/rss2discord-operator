@@ -18,6 +18,7 @@ package controller
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -55,7 +56,15 @@ const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.L
 // maxLastSentPerFeed bounds how many sent-entry hashes are retained per feed
 // in Status.LastSent. Without a cap this map grows by one key per sent
 // message forever, bloating the FeedGroup status subresource indefinitely.
-const maxLastSentPerFeed = 200
+//
+// The cap is kept deliberately modest because the whole status object lives in
+// etcd, which has a ~1MB object soft limit: at Feeds.MaxItems (50) this cap
+// bounds LastSent at 50*maxLastSentPerFeed {64-hex-hash: RFC3339} pairs, so the
+// product is the real budget to watch, not this number alone. LastSent is only
+// a dedup backstop -- LastSeenEntry is the primary watermark -- so it just needs
+// to cover the entries currently in a feed's window (typically 10-50), not its
+// whole history.
+const maxLastSentPerFeed = 50
 
 // defaultCatchUpLimit is used when FeedGroupSpec.CatchUpLimit is unset
 // (zero), which happens both for an explicit 0 and for CRDs applied before
@@ -177,6 +186,13 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	wantRetry := false
 	var discordRetryAfter time.Duration
 	for i, feed := range activeFeeds {
+		// All feeds in a group share one webhook, so once any feed hits
+		// Discord's per-webhook rate limit, processing the rest would only
+		// fire more sends that 429 too. Stop here and let the requeue (which
+		// backs off for discordRetryAfter below) retry the remaining feeds.
+		if discordRetryAfter > 0 {
+			break
+		}
 		retry, rateLimitRetryAfter := r.processFeed(ctx, &feedGroup, feed, fetched[i], fetchErrs[i], discordClient, now)
 		if retry {
 			wantRetry = true
@@ -300,8 +316,20 @@ func (r *FeedGroupReconciler) processFeed(
 		}
 	}
 
+	// Sort oldest-to-newest so the catch-up window (limitCatchUp keeps the
+	// tail) and the watermark (sendNewEntries advances LastSeenEntry to the
+	// last entry it sends) both track the *newest* entries. Published is the
+	// primary key, but many feeds omit per-entry dates, leaving every entry
+	// with a zero timestamp; in that case fall back to document order, where a
+	// lower Seq is newer (feeds list newest-first). Tie-break so a lower Seq
+	// sorts later (toward the newest tail) -- without this, date-less feeds
+	// would catch-up on their oldest entries and park the watermark there,
+	// then never deliver anything newer.
 	slices.SortStableFunc(entries, func(a, b rss.Entry) int {
-		return a.Published.Compare(b.Published)
+		if c := a.Published.Compare(b.Published); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.Seq, a.Seq)
 	})
 
 	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
@@ -401,6 +429,12 @@ func (r *FeedGroupReconciler) sendNewEntries(
 				if rateLimitErr.RetryAfter > rateLimitRetryAfter {
 					rateLimitRetryAfter = rateLimitErr.RetryAfter
 				}
+				// Discord rate limits are per-webhook, so once one entry is
+				// limited every further POST this reconcile would 429 too.
+				// Stop sending the rest of this feed's entries; the unsent ones
+				// stay pending (validators aren't persisted below) and are
+				// retried after the requeue backs off for RetryAfter.
+				break
 			} else {
 				feedGroup.Status.RetryCount[feed.RSSUrl]++
 				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSendError).Inc()
@@ -892,6 +926,16 @@ func truncateMessage(content string, max int) string {
 	}
 
 	const ellipsis = "…"
+	// Guard against a max too small to even hold the ellipsis: slicing to a
+	// negative bound would panic. No live caller passes a max this small (the
+	// limits are all Discord's hundreds/thousands), but keep it total so a
+	// future caller can't trip it.
+	if max <= 0 {
+		return ""
+	}
+	if max <= len([]rune(ellipsis)) {
+		return string(runes[:max])
+	}
 	return string(runes[:max-len([]rune(ellipsis))]) + ellipsis
 }
 

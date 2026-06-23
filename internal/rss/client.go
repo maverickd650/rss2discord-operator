@@ -35,6 +35,14 @@ type Entry struct {
 	Author      string
 	Categories  []string
 	Published   time.Time
+	// Seq is the entry's 0-based position in the feed document (0 = first
+	// listed). RSS/Atom feeds list newest-first by convention, so a lower Seq
+	// means more recent. It's the recency tiebreak used when Published is
+	// missing or tied: many feeds omit per-entry dates entirely, and without a
+	// fallback every such entry shares a zero timestamp and ordering collapses
+	// to document order, which the consumer would otherwise read tail-first
+	// (oldest) when picking the "most recent" entries.
+	Seq int
 }
 
 // CacheValidators carries the conditional-GET validators returned by a
@@ -407,7 +415,7 @@ func parseRSS(data []byte) ([]Entry, error) {
 	}
 
 	entries := make([]Entry, 0, len(envelope.Channel.Items))
-	for _, item := range envelope.Channel.Items {
+	for i, item := range envelope.Channel.Items {
 		published, _ := parseTime(item.PubDate)
 		id := strings.TrimSpace(item.GUID)
 		if id == "" {
@@ -431,6 +439,7 @@ func parseRSS(data []byte) ([]Entry, error) {
 			Author:      author,
 			Categories:  trimCategories(item.Categories),
 			Published:   published,
+			Seq:         i,
 		})
 	}
 
@@ -446,7 +455,7 @@ func parseAtom(data []byte) ([]Entry, error) {
 	feedBase := strings.TrimSpace(feed.Base)
 
 	entries := make([]Entry, 0, len(feed.Entries))
-	for _, item := range feed.Entries {
+	for i, item := range feed.Entries {
 		published, _ := parseTime(item.Published)
 		if published.IsZero() {
 			published, _ = parseTime(item.Updated)
@@ -486,6 +495,7 @@ func parseAtom(data []byte) ([]Entry, error) {
 			Author:      strings.TrimSpace(item.Author.Name),
 			Categories:  trimCategories(categoryTerms),
 			Published:   published,
+			Seq:         i,
 		})
 	}
 

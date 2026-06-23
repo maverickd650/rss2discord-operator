@@ -50,6 +50,7 @@ const (
 	feedGroupNameKeywords  = "test-feedgroup-keywords"
 	feedGroupNamePaused    = "test-feedgroup-paused"
 	feedGroupNameTimestamp = "test-feedgroup-timestamp"
+	exampleFeedURL         = "https://example.com/feed.xml"
 )
 
 // testRSSClient is a plain (non-SSRF-guarded) RSS client used in tests so
@@ -137,6 +138,7 @@ func (m *MockRSSServer) Close() {
 type MockDiscordServer struct {
 	server           *httptest.Server
 	messagesReceived int
+	deliveryAttempts int
 	bodiesReceived   []string
 	failNext         int
 	failStatus       int
@@ -157,6 +159,11 @@ func NewMockDiscordServer() *MockDiscordServer {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+
+		// deliveryAttempts counts every POST the controller actually made,
+		// including ones that fail, so tests can assert the controller stopped
+		// sending (e.g. after a 429) rather than only how many succeeded.
+		d.deliveryAttempts++
 
 		if d.failNext > 0 {
 			d.failNext--
@@ -210,6 +217,12 @@ func (d *MockDiscordServer) Close() {
 
 func (d *MockDiscordServer) MessageCount() int {
 	return d.messagesReceived
+}
+
+// DeliveryAttempts returns how many webhook POSTs the controller made,
+// counting failed deliveries (e.g. 429s) as well as successful ones.
+func (d *MockDiscordServer) DeliveryAttempts() int {
+	return d.deliveryAttempts
 }
 
 // DiscordClientBuilder returns a DiscordClientBuilder that trusts this mock
@@ -814,6 +827,100 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying only the configured catch-up limit was sent")
 			Expect(discordServer.MessageCount()).To(Equal(3))
+		})
+
+		It("should deliver newest entries and advance the watermark for feeds without publish dates", func() {
+			const feedGroupName = "test-feedgroup-nodate"
+
+			By("Creating mock Discord webhook server")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+
+			type item = struct {
+				title       string
+				description string
+				link        string
+				pubDate     string
+				guid        string
+			}
+			noDate := func(title, guid string) item {
+				// pubDate is left empty on purpose: this feed has no publish
+				// dates, which is exactly the case the ordering fallback covers.
+				return item{title: title, description: "body", link: "https://example.com/" + guid, pubDate: "", guid: guid}
+			}
+
+			By("Creating a mock RSS feed (newest-first, no pubDate) with a 3-entry backlog")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				noDate("Article C", "c"), // index 0 = newest by feed convention
+				noDate("Article B", "b"),
+				noDate("Article A", "a"), // index 2 = oldest
+			))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-nodate",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{secretURLKey: []byte(discordServer.URL())},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource with a catch-up limit of 2")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-nodate"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					CatchUpLimit:  2,
+					Feeds:         []rss2discordv1alpha1.FeedSpec{{RSSUrl: rssServer.URL()}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running the first reconcile")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying catch-up sent the two NEWEST entries (B and C), not the oldest (A)")
+			Expect(discordServer.MessageCount()).To(Equal(2))
+			bodies := strings.Join(discordServer.Bodies(), "\n")
+			Expect(bodies).To(ContainSubstring("Article B"))
+			Expect(bodies).To(ContainSubstring("Article C"))
+			Expect(bodies).NotTo(ContainSubstring("Article A"))
+
+			By("Publishing a newer entry at the top of the still-dateless feed")
+			rssServer.SetFeedContent(createRSSFeed(
+				noDate("Article D", "d"), // brand new, now newest
+				noDate("Article C", "c"),
+				noDate("Article B", "b"),
+				noDate("Article A", "a"),
+			))
+
+			By("Running the second reconcile")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying only the new entry D was delivered (watermark advanced, no silence, no re-send)")
+			Expect(discordServer.MessageCount()).To(Equal(3))
+			Expect(discordServer.Bodies()[2]).To(ContainSubstring("Article D"))
 		})
 	})
 
@@ -1805,7 +1912,7 @@ var _ = Describe("FeedGroup Controller", func() {
 					},
 					Interval: "30 minutes",
 					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: "https://example.com/feed.xml"},
+						{RSSUrl: exampleFeedURL},
 					},
 				},
 			}
@@ -1836,7 +1943,7 @@ var _ = Describe("FeedGroup Controller", func() {
 					},
 					RetryInterval: "five minutes",
 					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: "https://example.com/feed.xml"},
+						{RSSUrl: exampleFeedURL},
 					},
 				},
 			}
@@ -1972,6 +2079,115 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(updated.Status.FeedETag).To(HaveKeyWithValue(rssServer.URL(), `"v1"`))
 			Expect(updated.Status.LastError).To(BeEmpty())
+		})
+
+		It("should stop sending the rest of a feed's entries after the first 429", func() {
+			const feedGroupName = "test-feedgroup-rate-limited-stop"
+
+			By("Creating a mock Discord server that rate-limits many deliveries")
+			discordServer := NewMockDiscordServer()
+			defer discordServer.Close()
+			discordServer.FailNextRequestsRateLimited(10, "2")
+
+			By("Creating a mock RSS feed with several catch-up entries")
+			type item = struct {
+				title       string
+				description string
+				link        string
+				pubDate     string
+				guid        string
+			}
+			entries := make([]item, 0, 5)
+			for i := range 5 {
+				entries = append(entries, item{
+					title:       fmt.Sprintf("Article %d", i),
+					description: "body",
+					link:        fmt.Sprintf("https://example.com/article%d", i),
+					pubDate:     time.Now().Add(-time.Duration(5-i) * time.Hour).Format(time.RFC1123Z),
+					guid:        fmt.Sprintf("guid-%d", i),
+				})
+			}
+			rssServer := NewMockRSSServer(createRSSFeed(entries...))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "discord-webhook-rl-stop", Namespace: namespace},
+				Data:       map[string][]byte{secretURLKey: []byte(discordServer.URL())},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup with a catch-up limit of 5")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rl-stop"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					CatchUpLimit:  5,
+					Feeds:         []rss2discordv1alpha1.FeedSpec{{RSSUrl: rssServer.URL()}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:               k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				RSSClient:            testRSSClient(),
+				DiscordClientBuilder: discordServer.DiscordClientBuilder(),
+			}
+
+			By("Running reconciliation")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying only ONE POST was attempted before backing off, not one per entry")
+			Expect(discordServer.DeliveryAttempts()).To(Equal(1))
+			Expect(discordServer.MessageCount()).To(Equal(0))
+			Expect(result.RequeueAfter).To(Equal(2 * time.Second))
+		})
+	})
+
+	Describe("FeedGroup validation", func() {
+		It("should reject a FeedGroup with duplicate feed URLs", func() {
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-feedgroup-dup-url", Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "any-secret"},
+						Key:                  secretURLKey,
+					},
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: exampleFeedURL},
+						{RSSUrl: exampleFeedURL},
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, feedGroup)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("rssUrl must be unique"))
+		})
+
+		It("should accept a FeedGroup with distinct feed URLs", func() {
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-feedgroup-distinct-url", Namespace: namespace},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "any-secret"},
+						Key:                  secretURLKey,
+					},
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: "https://example.com/a.xml"},
+						{RSSUrl: "https://example.com/b.xml"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 		})
 	})
 

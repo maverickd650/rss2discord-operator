@@ -128,7 +128,9 @@ spec:
                   Feeds is the list of RSS feed configurations in this group. Capped at
                   maxConcurrentFetches (see feedgroup_controller.go) so a single
                   reconcile can't fan out an unbounded number of simultaneous outbound
-                  fetches.
+                  fetches. RSS URLs must be unique within a group, since all per-feed
+                  status (LastSeenEntry, LastSent, ETag, ...) is keyed by URL: two feeds
+                  sharing a URL would silently clobber each other's status.
                 items:
                   description: FeedSpec defines the configuration for a single RSS
                     feed.
@@ -201,6 +203,7 @@ spec:
                     rssUrl:
                       description: RSSUrl is the URL of the RSS feed to fetch. Only
                         http:// and https:// are supported.
+                      maxLength: 2048
                       pattern: ^https?://
                       type: string
                   required:
@@ -208,6 +211,9 @@ spec:
                   type: object
                 maxItems: 50
                 type: array
+                x-kubernetes-validations:
+                - message: each feed's rssUrl must be unique within a FeedGroup
+                  rule: self.all(f, self.exists_one(g, g.rssUrl == f.rssUrl))
               format:
                 default: |-
                   **{{.Title}}**
