@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.5.0...v0.6.0) (2026-06-23)
+
+
+### Features
+
+* add Prometheus native histogram support for request latency ([#58](https://github.com/maverickd650/rss2discord-operator/issues/58)) ([dec2ffb](https://github.com/maverickd650/rss2discord-operator/commit/dec2ffb177ec7670e78d27a36897ba6834d7989d))
+* redesign Grafana dashboard and ship it via grafana-operator ([#57](https://github.com/maverickd650/rss2discord-operator/issues/57)) ([a0e69c1](https://github.com/maverickd650/rss2discord-operator/commit/a0e69c10b1ef57505da29ec430a7619e96bb05ec))
+
+
+### Bug Fixes
+
+* increase test coverage ([#54](https://github.com/maverickd650/rss2discord-operator/issues/54)) ([c6c4cd0](https://github.com/maverickd650/rss2discord-operator/commit/c6c4cd03a692c84102b176338f37906d4c2780aa))
+
 ## [0.5.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.4.3...v0.5.0) (2026-06-23)
 
 
