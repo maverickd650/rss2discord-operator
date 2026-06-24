@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -190,6 +191,72 @@ func TestProcessFeed_QuietFetchAdvancesFreshness(t *testing.T) {
 	}
 }
 
+// messageOverflowSampleCount reads the observation count of a single
+// messageOverflowChars series.
+func messageOverflowSampleCount(t *testing.T, namespace, name string) uint64 {
+	t.Helper()
+	obs, err := messageOverflowChars.GetMetricWithLabelValues(namespace, name)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
+	}
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
+	}
+	return m.GetHistogram().GetSampleCount()
+}
+
+// TestProcessFeed_RecordsMessageOverflow asserts that sending an entry whose
+// rendered content exceeds Discord's message length limit records an
+// observation on messageOverflowChars, so an operator can see how often a
+// FeedGroup's content is actually getting cut off.
+func TestProcessFeed_RecordsMessageOverflow(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "metrics-overflow", "fg-overflow"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	const articleURL = "https://example.com/long-article"
+	fetchResult := rss.FetchResult{Entries: []rss.Entry{{
+		ID:          articleURL,
+		Title:       "Example entry",
+		Description: strings.Repeat("x", maxDiscordMessageLength+500),
+		Link:        articleURL,
+	}}}
+
+	(&FeedGroupReconciler{}).processFeed(ctx, fg, feed, fetchResult, nil, client, "2026-01-01T00:00:00Z")
+
+	if got := messageOverflowSampleCount(t, ns, name); got != 1 {
+		t.Fatalf("messageOverflowChars sample count = %d, want 1", got)
+	}
+}
+
+// TestProcessFeed_NoOverflowMetricWhenContentFits asserts that sending an
+// entry whose rendered content fits within Discord's limits does not record
+// an observation, so the histogram's count reflects only actual overflows.
+func TestProcessFeed_NoOverflowMetricWhenContentFits(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "metrics-no-overflow", "fg-no-overflow"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	(&FeedGroupReconciler{}).processFeed(ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
+
+	if got := messageOverflowSampleCount(t, ns, name); got != 0 {
+		t.Fatalf("messageOverflowChars sample count = %d, want 0", got)
+	}
+}
+
 // TestFeedRequestDuration_HybridHistogram guards the hybrid exposition
 // config on feedRequestDuration: classic buckets must stay present (so the
 // existing Grafana panels/heatmap keep working unchanged) while the native
@@ -227,6 +294,7 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 	feedOperationsTotal.WithLabelValues(ns, name, outcomeSent).Inc()
 	feedRequestDuration.WithLabelValues(ns, name, operationSend).Observe(0.1)
 	feedLastSuccessTimestamp.WithLabelValues(ns, name).Set(123)
+	messageOverflowChars.WithLabelValues(ns, name).Observe(42)
 
 	deleteFeedGroupMetrics(ns, name)
 
@@ -240,6 +308,9 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 	}
 	if got := histogramSampleCount(t, ns, name, operationSend); got != 0 {
 		t.Fatalf("send duration sample count after delete = %d, want 0", got)
+	}
+	if got := messageOverflowSampleCount(t, ns, name); got != 0 {
+		t.Fatalf("message overflow sample count after delete = %d, want 0", got)
 	}
 	deleteFeedGroupMetrics(ns, name)
 }

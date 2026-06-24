@@ -104,23 +104,28 @@ func TestStripHTML(t *testing.T) {
 
 func TestTruncateMessage(t *testing.T) {
 	cases := []struct {
-		name    string
-		content string
-		max     int
-		want    string
+		name         string
+		content      string
+		max          int
+		want         string
+		wantOverflow int
 	}{
-		{name: "under limit unchanged", content: shortContent, max: 10, want: shortContent},
-		{name: "exactly at limit unchanged", content: shortContent, max: 5, want: shortContent},
-		{name: "truncated with ellipsis", content: truncateMe, max: 5, want: "trun…"},
-		{name: "multibyte trimmed by rune", content: "日本語テスト", max: 3, want: "日本…"},
-		{name: "max one keeps single rune without ellipsis", content: truncateMe, max: 1, want: "t"},
-		{name: "max zero yields empty", content: truncateMe, max: 0, want: ""},
-		{name: "negative max yields empty", content: truncateMe, max: -5, want: ""},
+		{name: "under limit unchanged", content: shortContent, max: 10, want: shortContent, wantOverflow: 0},
+		{name: "exactly at limit unchanged", content: shortContent, max: 5, want: shortContent, wantOverflow: 0},
+		{name: "truncated with ellipsis", content: truncateMe, max: 5, want: "trun…", wantOverflow: len([]rune(truncateMe)) - 5},
+		{name: "multibyte trimmed by rune", content: "日本語テスト", max: 3, want: "日本…", wantOverflow: 3},
+		{name: "max one keeps single rune without ellipsis", content: truncateMe, max: 1, want: "t", wantOverflow: len([]rune(truncateMe)) - 1},
+		{name: "max zero yields empty", content: truncateMe, max: 0, want: "", wantOverflow: len([]rune(truncateMe))},
+		{name: "negative max yields empty", content: truncateMe, max: -5, want: "", wantOverflow: len([]rune(truncateMe)) + 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := truncateMessage(tc.content, tc.max); got != tc.want {
+			got, overflow := truncateMessage(tc.content, tc.max)
+			if got != tc.want {
 				t.Fatalf("truncateMessage(%q, %d) = %q, want %q", tc.content, tc.max, got, tc.want)
+			}
+			if overflow != tc.wantOverflow {
+				t.Fatalf("truncateMessage(%q, %d) overflow = %d, want %d", tc.content, tc.max, overflow, tc.wantOverflow)
 			}
 		})
 	}
@@ -493,7 +498,7 @@ func TestRenderTemplate_AuthorAndCategories(t *testing.T) {
 	}
 
 	entry := rss.Entry{Author: "Jane Doe", Categories: []string{"Go", "Kubernetes"}}
-	got, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
+	got, _, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -502,7 +507,7 @@ func TestRenderTemplate_AuthorAndCategories(t *testing.T) {
 	}
 
 	t.Run("empty author and categories render blank", func(t *testing.T) {
-		got, err := renderTemplate(tmpl, rss.Entry{}, maxDiscordMessageLength)
+		got, _, err := renderTemplate(tmpl, rss.Entry{}, maxDiscordMessageLength)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -519,7 +524,7 @@ func TestRenderTemplate_StripsHTMLFromTitle(t *testing.T) {
 	}
 
 	entry := rss.Entry{Title: "<b>Breaking</b> News &amp; Views"}
-	got, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
+	got, _, err := renderTemplate(tmpl, entry, maxDiscordMessageLength)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

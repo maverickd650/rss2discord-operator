@@ -44,6 +44,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/maverickd650/rss2discord-operator/api/v1alpha1"
@@ -90,6 +91,13 @@ type FeedGroupReconciler struct {
 	RSSClient            *rss.Client
 	DiscordClientBuilder func(webhookURL string) *discord.Client
 	Recorder             events.EventRecorder
+	// MaxConcurrentReconciles bounds how many FeedGroups this controller
+	// reconciles in parallel. Each reconcile only does outbound HTTP I/O
+	// (RSS fetch, Discord send) against a FeedGroup-local status snapshot,
+	// so multiple FeedGroups can safely reconcile concurrently; left at the
+	// zero value, controller-runtime defaults this to 1, preserving the
+	// historical single-worker behavior.
+	MaxConcurrentReconciles int
 }
 
 // +kubebuilder:rbac:groups=rss2discord.maverickd650.dev,resources=feedgroups,verbs=get;list;watch;create;update;patch;delete
@@ -865,7 +873,10 @@ const (
 	maxForumThreadNameLength  = 100
 )
 
-func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, error) {
+// renderTemplate executes tmpl against entry and clamps the result to max
+// runes. The second return value is how many runes were trimmed off (0 if
+// the rendered text already fit), as reported by truncateMessage.
+func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, int, error) {
 	data := struct {
 		Title       string
 		Description string
@@ -884,10 +895,11 @@ func renderTemplate(tmpl *template.Template, entry rss.Entry, max int) (string, 
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", err
+		return "", 0, err
 	}
 
-	return truncateMessage(buf.String(), max), nil
+	content, overflow := truncateMessage(buf.String(), max)
+	return content, overflow, nil
 }
 
 // buildDiscordMessage renders entry into the message that should actually
@@ -907,13 +919,17 @@ func buildDiscordMessage(
 		AvatarURL: feedGroup.Spec.AvatarURL,
 	}
 
+	var overflow int
+
 	if embedSpec != nil && embedSpec.Enabled {
-		description, err := renderTemplate(descriptionTmpl, entry, maxEmbedDescriptionLength)
+		description, descOverflow, err := renderTemplate(descriptionTmpl, entry, maxEmbedDescriptionLength)
 		if err != nil {
 			return discord.Message{}, err
 		}
+		title, titleOverflow := truncateMessage(stripHTML(entry.Title), maxEmbedTitleLength)
+		overflow += descOverflow + titleOverflow
 		msg.Embed = &discord.Embed{
-			Title:        truncateMessage(stripHTML(entry.Title), maxEmbedTitleLength),
+			Title:        title,
 			Description:  description,
 			URL:          httpURLOrEmpty(entry.Link),
 			Color:        parseHexColor(embedSpec.Color),
@@ -923,21 +939,27 @@ func buildDiscordMessage(
 			FooterText:   embedSpec.FooterText,
 		}
 	} else {
-		content, err := renderTemplate(contentTmpl, entry, maxDiscordMessageLength)
+		content, contentOverflow, err := renderTemplate(contentTmpl, entry, maxDiscordMessageLength)
 		if err != nil {
 			return discord.Message{}, err
 		}
+		overflow += contentOverflow
 		msg.Content = content
 	}
 
 	if strings.TrimSpace(feed.ForumThreadID) != "" {
 		msg.ThreadID = feed.ForumThreadID
 	} else if threadNameTmpl != nil {
-		threadName, err := renderTemplate(threadNameTmpl, entry, maxForumThreadNameLength)
+		threadName, threadOverflow, err := renderTemplate(threadNameTmpl, entry, maxForumThreadNameLength)
 		if err != nil {
 			return discord.Message{}, err
 		}
+		overflow += threadOverflow
 		msg.ThreadName = threadName
+	}
+
+	if overflow > 0 {
+		messageOverflowChars.WithLabelValues(feedGroup.Namespace, feedGroup.Name).Observe(float64(overflow))
 	}
 
 	return msg, nil
@@ -945,12 +967,15 @@ func buildDiscordMessage(
 
 // truncateMessage trims content to at most max characters (by rune), since
 // Discord rejects webhook messages over its content length limit outright
-// rather than truncating them itself.
-func truncateMessage(content string, max int) string {
+// rather than truncating them itself. The second return value is how many
+// runes were cut (0 if content already fit), so callers can report how
+// often/how severely truncation actually happens.
+func truncateMessage(content string, max int) (string, int) {
 	runes := []rune(content)
 	if len(runes) <= max {
-		return content
+		return content, 0
 	}
+	overflow := len(runes) - max
 
 	const ellipsis = "…"
 	// Guard against a max too small to even hold the ellipsis: slicing to a
@@ -958,12 +983,12 @@ func truncateMessage(content string, max int) string {
 	// limits are all Discord's hundreds/thousands), but keep it total so a
 	// future caller can't trip it.
 	if max <= 0 {
-		return ""
+		return "", overflow
 	}
 	if max <= len([]rune(ellipsis)) {
-		return string(runes[:max])
+		return string(runes[:max]), overflow
 	}
-	return string(runes[:max-len([]rune(ellipsis))]) + ellipsis
+	return string(runes[:max-len([]rune(ellipsis))]) + ellipsis, overflow
 }
 
 // pruneLastSent caps a feed's sent-entry dedup map at max entries, dropping
@@ -1040,5 +1065,6 @@ func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.FeedGroup{}).
 		Named("feedgroup").
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
 		Complete(r)
 }

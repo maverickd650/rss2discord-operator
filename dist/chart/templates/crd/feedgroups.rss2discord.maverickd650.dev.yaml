@@ -240,8 +240,16 @@ spec:
               username:
                 description: |-
                   Username overrides the webhook's default display name for messages
-                  sent from this group.
+                  sent from this group. Discord rejects names containing "clyde" or
+                  "discord" (case-insensitive) or over 80 characters, so both
+                  constraints are enforced here at admission rather than surfacing only
+                  as a runtime send failure.
+                maxLength: 80
                 type: string
+                x-kubernetes-validations:
+                - message: username must not contain "clyde" or "discord" (Discord
+                    rejects these)
+                  rule: '!self.lowerAscii().contains(''clyde'') && !self.lowerAscii().contains(''discord'')'
             required:
             - discordWebhookSecretRef
             - feeds

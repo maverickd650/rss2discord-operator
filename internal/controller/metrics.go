@@ -101,6 +101,30 @@ var feedLastSuccessTimestamp = prometheus.NewGaugeVec(
 	[]string{labelNamespace, labelName},
 )
 
+// messageOverflowChars records how many characters were trimmed from a
+// rendered Discord message/embed-description/thread-name before it was
+// clamped to fit Discord's length limits (truncateMessage in
+// feedgroup_controller.go). Only actual overflows are observed -- the vast
+// majority of entries render under the limit -- so the histogram's _count
+// directly answers "how often does this FeedGroup's content get cut off,"
+// rather than burying that signal in a sea of zero observations.
+//
+// Like feedRequestDuration, this is a hybrid histogram: the classic Buckets
+// keep existing ..._bucket/le consumers working, while the Native* fields
+// add the higher-resolution exponential representation for free on a
+// Prometheus server with native histograms enabled.
+var messageOverflowChars = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:                            "rss2discord_message_overflow_chars",
+		Help:                            "Characters trimmed from a rendered Discord message before it was clamped to fit Discord's length limits. Only recorded when content actually overflowed.",
+		Buckets:                         []float64{1, 10, 50, 100, 500, 1000, 5000},
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: time.Hour,
+	},
+	[]string{labelNamespace, labelName},
+)
+
 // deleteFeedGroupMetrics drops every series for a FeedGroup that no longer
 // exists. Without it a deleted FeedGroup's series linger in the registry
 // until the controller restarts -- harmless for the counters, but actively
@@ -111,8 +135,9 @@ func deleteFeedGroupMetrics(namespace, name string) {
 	feedOperationsTotal.DeletePartialMatch(labels)
 	feedRequestDuration.DeletePartialMatch(labels)
 	feedLastSuccessTimestamp.DeletePartialMatch(labels)
+	messageOverflowChars.DeletePartialMatch(labels)
 }
 
 func init() {
-	metrics.Registry.MustRegister(feedOperationsTotal, feedRequestDuration, feedLastSuccessTimestamp)
+	metrics.Registry.MustRegister(feedOperationsTotal, feedRequestDuration, feedLastSuccessTimestamp, messageOverflowChars)
 }

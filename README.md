@@ -119,7 +119,7 @@ kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager 
 | `retryInterval` | `string` | `5m` | Delay between retries |
 | `format` | `string` | see below | Discord message template (used when `embed` is not enabled) |
 | `embed` | `*Embed` | optional | Default embed config for all feeds in the group |
-| `username` | `string` | optional | Overrides the webhook's display name (Discord rejects names containing "clyde" or "discord", or over 80 characters) |
+| `username` | `string` | optional | Overrides the webhook's display name. Rejected at `kubectl apply` time (CEL validation) if it contains "clyde" or "discord", or is over 80 characters — Discord's own webhook API rejects these |
 | `avatarURL` | `string` | optional | Overrides the webhook's avatar |
 | `feeds` | `[]Feed` | required | RSS feeds to monitor |
 
