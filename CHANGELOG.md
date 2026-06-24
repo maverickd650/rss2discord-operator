@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.2...v0.6.3) (2026-06-24)
+
+
+### Bug Fixes
+
+* add capabilities ([#65](https://github.com/maverickd650/rss2discord-operator/issues/65)) ([e369b02](https://github.com/maverickd650/rss2discord-operator/commit/e369b0204e8819720b027e71cc80f209d7b7448c))
+
 ## [0.6.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.1...v0.6.2) (2026-06-23)
 
 
