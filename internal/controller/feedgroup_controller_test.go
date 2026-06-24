@@ -41,16 +41,17 @@ import (
 )
 
 const (
-	secretURLKey           = "url"
-	defaultInterval        = "30m"
-	feedGroupNameBasic     = "test-feedgroup"
-	feedGroupNameNoSecret  = "test-feedgroup-no-secret"
-	feedGroupNameRetry     = "test-feedgroup-retry"
-	feedGroupNameFilter    = "test-feedgroup-filter"
-	feedGroupNameKeywords  = "test-feedgroup-keywords"
-	feedGroupNamePaused    = "test-feedgroup-paused"
-	feedGroupNameTimestamp = "test-feedgroup-timestamp"
-	exampleFeedURL         = "https://example.com/feed.xml"
+	secretURLKey             = "url"
+	defaultInterval          = "30m"
+	feedGroupNameBasic       = "test-feedgroup"
+	feedGroupNameNoSecret    = "test-feedgroup-no-secret"
+	feedGroupNameRetry       = "test-feedgroup-retry"
+	feedGroupNameFilter      = "test-feedgroup-filter"
+	feedGroupNameKeywords    = "test-feedgroup-keywords"
+	feedGroupNamePaused      = "test-feedgroup-paused"
+	feedGroupNameTimestamp   = "test-feedgroup-timestamp"
+	exampleFeedURL           = "https://example.com/feed.xml"
+	discordWebhookSecretName = "discord-webhook"
 )
 
 // testRSSClient is a plain (non-SSRF-guarded) RSS client used in tests so
@@ -329,7 +330,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			By("Creating a secret with Discord webhook URL")
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook",
+					Name:      discordWebhookSecretName,
 					Namespace: namespace,
 				},
 				Data: map[string][]byte{
@@ -346,7 +347,7 @@ var _ = Describe("FeedGroup Controller", func() {
 				},
 				Spec: rss2discordv1alpha1.FeedGroupSpec{
 					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook"},
+						LocalObjectReference: corev1.LocalObjectReference{Name: discordWebhookSecretName},
 						Key:                  secretURLKey,
 					},
 					Interval:      defaultInterval,
@@ -2577,6 +2578,51 @@ var _ = Describe("FeedGroup Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
+		})
+	})
+
+	Describe("Username admission validation", func() {
+		// minimalFeedGroup returns a FeedGroup that satisfies every field
+		// other than Username, so these tests isolate the CEL rule on
+		// Username rather than tripping over unrelated required fields.
+		minimalFeedGroup := func(name, username string) *rss2discordv1alpha1.FeedGroup {
+			return &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: discordWebhookSecretName},
+						Key:                  secretURLKey,
+					},
+					Username: username,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: exampleFeedURL},
+					},
+				},
+			}
+		}
+
+		DescribeTable("should reject usernames Discord itself would reject",
+			func(username string) {
+				err := k8sClient.Create(ctx, minimalFeedGroup("username-rejected", username))
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("username must not contain"))
+			},
+			Entry("contains clyde", "ClydeBot"),
+			Entry("contains discord", "totally-discord-official"),
+		)
+
+		It("should reject a username over 80 characters", func() {
+			err := k8sClient.Create(ctx, minimalFeedGroup("username-too-long", strings.Repeat("a", 81)))
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should accept a username that doesn't violate either constraint", func() {
+			feedGroup := minimalFeedGroup("username-ok", "tech-news-bot")
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, feedGroup)).To(Succeed())
 		})
 	})
 })

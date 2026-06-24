@@ -128,7 +128,12 @@ type FeedGroupSpec struct {
 	Embed *EmbedSpec `json:"embed,omitempty"`
 
 	// Username overrides the webhook's default display name for messages
-	// sent from this group.
+	// sent from this group. Discord rejects names containing "clyde" or
+	// "discord" (case-insensitive) or over 80 characters, so both
+	// constraints are enforced here at admission rather than surfacing only
+	// as a runtime send failure.
+	// +kubebuilder:validation:MaxLength=80
+	// +kubebuilder:validation:XValidation:rule="!self.lowerAscii().contains('clyde') && !self.lowerAscii().contains('discord')",message="username must not contain \"clyde\" or \"discord\" (Discord rejects these)"
 	// +optional
 	Username string `json:"username,omitempty"`
 
