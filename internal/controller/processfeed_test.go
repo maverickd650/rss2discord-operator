@@ -50,7 +50,7 @@ func TestProcessFeed_InvalidFilterRegex(t *testing.T) {
 	if rateLimitRetryAfter != 0 {
 		t.Fatalf("expected no rate-limit backoff, got %v", rateLimitRetryAfter)
 	}
-	if fg.Status.LastError[feed.RSSUrl] == "" {
+	if feedStatusFor(fg, feed.RSSUrl).LastError == "" {
 		t.Fatal("expected LastError to be set for the invalid filter regex")
 	}
 	if discordServer.MessageCount() != 0 {
@@ -79,7 +79,7 @@ func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 	if !wantRetry {
 		t.Fatal("expected retry for an invalid message template")
 	}
-	if fg.Status.LastError[feed.RSSUrl] == "" {
+	if feedStatusFor(fg, feed.RSSUrl).LastError == "" {
 		t.Fatal("expected LastError to be set for the invalid template")
 	}
 	if discordServer.MessageCount() != 0 {
@@ -110,7 +110,7 @@ func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
 	if !wantRetry {
 		t.Fatal("expected retry for an invalid forum thread name template")
 	}
-	if fg.Status.LastError[feed.RSSUrl] == "" {
+	if feedStatusFor(fg, feed.RSSUrl).LastError == "" {
 		t.Fatal("expected LastError to be set for the invalid forum thread name template")
 	}
 	if discordServer.MessageCount() != 0 {
@@ -135,8 +135,8 @@ func TestProcessFeed_NotModifiedPersistsLastModified(t *testing.T) {
 	if wantRetry {
 		t.Fatal("expected no retry on a 304 response")
 	}
-	if got := fg.Status.FeedLastModified[feed.RSSUrl]; got != fetchResult.LastModified {
-		t.Fatalf("FeedLastModified[%q] = %q, want %q", feed.RSSUrl, got, fetchResult.LastModified)
+	if got := feedStatusFor(fg, feed.RSSUrl).LastModified; got != fetchResult.LastModified {
+		t.Fatalf("LastModified[%q] = %q, want %q", feed.RSSUrl, got, fetchResult.LastModified)
 	}
 }
 
@@ -153,13 +153,13 @@ func TestProcessFeed_LastCheckedTracksSuccessNotAttempts(t *testing.T) {
 
 	(&FeedGroupReconciler{}).processFeed(
 		ctx, fg, feed, rss.FetchResult{}, errors.New("boom"), nil, "2026-01-01T00:00:00Z")
-	if _, ok := fg.Status.LastChecked[feed.RSSUrl]; ok {
+	if got := feedStatusFor(fg, feed.RSSUrl).LastChecked; got != "" {
 		t.Fatal("expected LastChecked not to be set after a fetch error")
 	}
 
 	(&FeedGroupReconciler{}).processFeed(
 		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, "2026-01-01T00:00:00Z")
-	if got := fg.Status.LastChecked[feed.RSSUrl]; got != "2026-01-01T00:00:00Z" {
+	if got := feedStatusFor(fg, feed.RSSUrl).LastChecked; got != "2026-01-01T00:00:00Z" {
 		t.Fatalf("LastChecked after a 304 = %q, want it set to the check time", got)
 	}
 }
@@ -178,7 +178,7 @@ func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
 	fg, feed := newMetricsFeedGroup(ns, name, "")
 	fetchResult := oneEntryFetch()
 	entryKey := computeEntryKey(fetchResult.Entries[0])
-	fg.Status.LastSent[feed.RSSUrl] = map[string]string{entryKey: "2025-12-31T00:00:00Z"}
+	feedStatusFor(fg, feed.RSSUrl).LastSent = map[string]string{entryKey: "2025-12-31T00:00:00Z"}
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(

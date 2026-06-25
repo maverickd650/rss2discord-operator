@@ -296,67 +296,52 @@ func TestEntryIdentity_PreservesNonURLGUIDUnchanged(t *testing.T) {
 	}
 }
 
-// TestPruneRemovedFeedStatus asserts every per-feed-URL status map is
-// pruned of entries for a URL no longer in spec, while a URL still in spec
-// is left untouched in every map.
-func TestPruneRemovedFeedStatus(t *testing.T) {
+// TestEnsureFeedStatuses asserts ensureFeedStatuses drops the FeedStatus
+// entry for a URL no longer in spec, carries over an existing entry's state
+// for a URL still in spec untouched, and adds a fresh zero-valued entry for
+// a URL newly added to spec.
+func TestEnsureFeedStatuses(t *testing.T) {
 	const keptURL = "https://example.com/kept.xml"
 	const staleURL = "https://example.com/stale.xml"
+	const newURL = "https://example.com/new.xml"
 
 	fg := &v1alpha1.FeedGroup{
 		Spec: v1alpha1.FeedGroupSpec{
-			Feeds: []v1alpha1.FeedSpec{{RSSUrl: keptURL}},
+			Feeds: []v1alpha1.FeedSpec{{RSSUrl: keptURL}, {RSSUrl: newURL}},
 		},
 		Status: v1alpha1.FeedGroupStatus{
-			LastChecked:      map[string]string{keptURL: "x", staleURL: "x"},
-			LastSeenEntry:    map[string]string{keptURL: "x", staleURL: "x"},
-			LastSent:         map[string]map[string]string{keptURL: {}, staleURL: {}},
-			LastError:        map[string]string{keptURL: "x", staleURL: "x"},
-			RetryCount:       map[string]int{keptURL: 1, staleURL: 1},
-			FeedETag:         map[string]string{keptURL: "x", staleURL: "x"},
-			FeedLastModified: map[string]string{keptURL: "x", staleURL: "x"},
+			Feeds: []v1alpha1.FeedStatus{
+				{RSSUrl: keptURL, LastError: "x", RetryCount: 1},
+				{RSSUrl: staleURL, LastError: "x", RetryCount: 1},
+			},
 		},
 	}
 
-	pruneRemovedFeedStatus(fg)
+	ensureFeedStatuses(fg)
 
-	assertPruned := func(mapName string, hasKept, hasStale bool) {
-		t.Helper()
-		if !hasKept {
-			t.Fatalf("%s: expected kept URL to be retained", mapName)
-		}
-		if hasStale {
-			t.Fatalf("%s: expected stale URL to be removed", mapName)
-		}
+	if got := feedStatusFor(fg, staleURL); got != nil {
+		t.Fatalf("expected stale URL's FeedStatus to be removed, got %+v", got)
 	}
 
-	_, keptOK := fg.Status.LastChecked[keptURL]
-	_, staleOK := fg.Status.LastChecked[staleURL]
-	assertPruned("LastChecked", keptOK, staleOK)
+	kept := feedStatusFor(fg, keptURL)
+	if kept == nil {
+		t.Fatal("expected kept URL's FeedStatus to be retained")
+	}
+	if kept.LastError != "x" || kept.RetryCount != 1 {
+		t.Fatalf("expected kept URL's existing state to be preserved, got %+v", kept)
+	}
 
-	_, keptOK = fg.Status.LastSeenEntry[keptURL]
-	_, staleOK = fg.Status.LastSeenEntry[staleURL]
-	assertPruned("LastSeenEntry", keptOK, staleOK)
+	newEntry := feedStatusFor(fg, newURL)
+	if newEntry == nil {
+		t.Fatal("expected new URL to get a fresh FeedStatus entry")
+	}
+	if newEntry.LastError != "" || newEntry.RetryCount != 0 {
+		t.Fatalf("expected new URL's FeedStatus to be zero-valued, got %+v", newEntry)
+	}
 
-	_, keptOK = fg.Status.LastSent[keptURL]
-	_, staleOK = fg.Status.LastSent[staleURL]
-	assertPruned("LastSent", keptOK, staleOK)
-
-	_, keptOK = fg.Status.LastError[keptURL]
-	_, staleOK = fg.Status.LastError[staleURL]
-	assertPruned("LastError", keptOK, staleOK)
-
-	_, keptOK = fg.Status.RetryCount[keptURL]
-	_, staleOK = fg.Status.RetryCount[staleURL]
-	assertPruned("RetryCount", keptOK, staleOK)
-
-	_, keptOK = fg.Status.FeedETag[keptURL]
-	_, staleOK = fg.Status.FeedETag[staleURL]
-	assertPruned("FeedETag", keptOK, staleOK)
-
-	_, keptOK = fg.Status.FeedLastModified[keptURL]
-	_, staleOK = fg.Status.FeedLastModified[staleURL]
-	assertPruned("FeedLastModified", keptOK, staleOK)
+	if len(fg.Status.Feeds) != 2 {
+		t.Fatalf("expected exactly one FeedStatus per spec feed, got %d", len(fg.Status.Feeds))
+	}
 }
 
 func TestCompileFilterRegex(t *testing.T) {
