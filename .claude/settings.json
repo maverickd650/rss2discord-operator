@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nblocked = ['zz_generated', 'config/crd/bases/', 'config/rbac/role.yaml', 'config/webhook/manifests.yaml', 'PROJECT']\nif any(b in path for b in blocked):\n    print(f'BLOCKED: {path} is auto-generated. Run: mise run manifests or mise run generate', file=sys.stderr)\n    sys.exit(2)\n\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, subprocess\ndata = json.load(sys.stdin)\npath = data.get('tool_input', {}).get('file_path', '')\nif path.endswith('.go'):\n    result = subprocess.run(['mise', 'run', 'lint-fix'], capture_output=True, text=True)\n    if result.returncode != 0:\n        output = result.stdout or result.stderr\n        print(output[-1000:] if len(output) > 1000 else output)\n\""
+          }
+        ]
+      }
+    ]
+  }
+}
