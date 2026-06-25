@@ -225,6 +225,14 @@ type FeedStatus struct {
 	// +optional
 	RetryCount int `json:"retryCount,omitempty"`
 
+	// BackoffUntil is an RFC3339 timestamp before which this feed should not
+	// be fetched again. Set on permanent fetch failures (e.g. HTTP 404) using
+	// exponential backoff starting from Spec.RetryInterval; cleared on the
+	// next successful fetch or when the FeedGroup spec changes. An empty
+	// string means the feed is not in backoff.
+	// +optional
+	BackoffUntil string `json:"backoffUntil,omitempty"`
+
 	// Conditions report this feed's health along the two independent
 	// stages a delivery passes through: FeedConditionTypeReachable (was the
 	// feed itself fetchable) and FeedConditionTypeDelivered (did rendering
