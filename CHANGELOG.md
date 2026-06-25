@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.3...v0.7.0) (2026-06-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* rss2discord_feed_request_duration_seconds and rss2discord_message_overflow_chars no longer expose classic _bucket series. Any external dashboard, recording rule, or alert querying ..._bucket/le on these two metrics will stop matching. Scraping with prometheus.scrapeNativeHistograms=false (or an older Prometheus without native histogram support) now yields _count/_sum only, with no histogram_quantile resolution -- there is no classic fallback. The bundled dashboard and PrometheusRule have been updated accordingly.
+* FeedGroupStatus's per-feed-URL maps (lastChecked, lastSeenEntry, lastSent, lastError, feedETag, feedLastModified, retryCount) are replaced by status.feeds[], keyed by rssUrl. Status is server-generated, so existing FeedGroups get fresh status on their next reconcile with no manual migration -- but anything scripting against the old shape (e.g. `kubectl get feedgroup -o jsonpath='{.status.lastError}'`) needs to read .status.feeds[].lastError instead.
+* **container:** Update image ghcr.io/devcontainers/features/docker-in-docker (3 → 4) ([#70](https://github.com/maverickd650/rss2discord-operator/issues/70))
+
+### Features
+
+* add exponential backoff for permanent feed fetch failures ([#75](https://github.com/maverickd650/rss2discord-operator/issues/75)) ([fc3c804](https://github.com/maverickd650/rss2discord-operator/commit/fc3c8040cff366df295b0a1c3bdfcf2acf9d7e3d))
+* classify feed failures, restructure status, and diversify metrics ([#73](https://github.com/maverickd650/rss2discord-operator/issues/73)) ([3a1fb6c](https://github.com/maverickd650/rss2discord-operator/commit/3a1fb6c292fd9a07a08dee81a9e85f5fd645b349))
+* **container:** Update image ghcr.io/devcontainers/features/docker-in-docker (3 → 4) ([#70](https://github.com/maverickd650/rss2discord-operator/issues/70)) ([68a998d](https://github.com/maverickd650/rss2discord-operator/commit/68a998d852fd950cd1012cecc429fe247f33f670))
+* export histograms native-only and add reconcile duration metric ([#76](https://github.com/maverickd650/rss2discord-operator/issues/76)) ([b370386](https://github.com/maverickd650/rss2discord-operator/commit/b3703862bfd5522424e41736f342e2f3dbc94015))
+
 ## [0.6.3](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.2...v0.6.3) (2026-06-24)
 
 
