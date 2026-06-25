@@ -33,6 +33,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rss2discordv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
@@ -1979,6 +1981,96 @@ var _ = Describe("FeedGroup Controller", func() {
 			_, err = time.Parse(time.RFC3339, feedStatusFor(updated, rssServer.URL()).LastChecked)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("should skip a feed whose permanent-failure backoff has not yet elapsed", func() {
+			const feedGroupName = "test-feedgroup-backoff-skip"
+
+			By("Creating a mock RSS feed server")
+			rssServer := NewMockRSSServer(createRSSFeed(
+				struct {
+					title       string
+					description string
+					link        string
+					pubDate     string
+					guid        string
+				}{
+					title:       "Test",
+					description: "Test",
+					link:        "https://example.com/test",
+					pubDate:     time.Now().Format(time.RFC1123Z),
+					guid:        "test-1",
+				},
+			))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-backoff-skip",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-backoff-skip"},
+						Key:                  secretURLKey,
+					},
+					Interval: defaultInterval,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				RSSClient: testRSSClient(),
+			}
+
+			// The first reconcile after creation has Generation > ObservedGeneration,
+			// which clears any BackoffUntil set below it. Reconcile once first so
+			// ObservedGeneration catches up, then set BackoffUntil and reconcile
+			// again at the same generation, where the skip in Reconcile (the loop
+			// building activeFeeds) actually applies.
+			By("Running an initial reconciliation to advance ObservedGeneration")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			By("Setting a future BackoffUntil on the feed's status")
+			afterFirstReconcile := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirstReconcile)).To(Succeed())
+			feedStatusFor(afterFirstReconcile, rssServer.URL()).BackoffUntil = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+			Expect(k8sClient.Status().Update(ctx, afterFirstReconcile)).To(Succeed())
+
+			By("Running reconciliation")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the backed-off feed was not fetched again")
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(feedStatusFor(updated, rssServer.URL()).LastChecked).To(Equal(feedStatusFor(afterFirstReconcile, rssServer.URL()).LastChecked))
+		})
 	})
 
 	Describe("Status pruning for removed feeds", func() {
@@ -2644,11 +2736,18 @@ var _ = Describe("FeedGroup Controller", func() {
 				RSSClient: testRSSClient(),
 			}
 
+			defer deleteFeedGroupMetrics(namespace, "nonexistent")
+
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "nonexistent", Namespace: namespace},
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
+
+			By("Verifying no reconcile-duration series was created for a FeedGroup that doesn't exist")
+			count, err := reconcileDurationSampleCountErr(namespace, "nonexistent")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(count).To(Equal(uint64(0)))
 		})
 	})
 
@@ -2694,6 +2793,22 @@ var _ = Describe("FeedGroup Controller", func() {
 			feedGroup := minimalFeedGroup("username-ok", "tech-news-bot")
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, feedGroup)).To(Succeed())
+		})
+	})
+
+	Describe("SetupWithManager", func() {
+		It("should default the event recorder when none is set", func() {
+			mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+				Scheme:  k8sClient.Scheme(),
+				Metrics: metricsserver.Options{BindAddress: "0"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciler := &FeedGroupReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}
+			Expect(reconciler.Recorder).To(BeNil())
+
+			Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
+			Expect(reconciler.Recorder).NotTo(BeNil())
 		})
 	})
 })

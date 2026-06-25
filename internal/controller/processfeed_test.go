@@ -226,6 +226,21 @@ func TestPermanentBackoffDuration(t *testing.T) {
 	}
 }
 
+// TestPermanentBackoffDuration_ClampsRetryCountBelowOne asserts a retryCount
+// of zero (or negative) is treated the same as 1, so a caller can never get a
+// larger backoff than the first retry by passing an unclamped count.
+func TestPermanentBackoffDuration_ClampsRetryCountBelowOne(t *testing.T) {
+	base := 5 * time.Minute
+	want := permanentBackoffDuration(1, base)
+
+	if got := permanentBackoffDuration(0, base); got != want {
+		t.Errorf("retryCount=0: got %v, want %v (same as retryCount=1)", got, want)
+	}
+	if got := permanentBackoffDuration(-1, base); got != want {
+		t.Errorf("retryCount=-1: got %v, want %v (same as retryCount=1)", got, want)
+	}
+}
+
 // TestProcessFeed_PermanentFetchFailureSetsBackoff asserts a permanent fetch
 // error (HTTP 404) sets BackoffUntil to an exponential offset, returns no
 // wantRetry (the group's normal interval is unaffected), and does not set a

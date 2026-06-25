@@ -169,10 +169,13 @@ certManager:
 ##
 prometheus:
   enabled: false
-  ## Scrape rss2discord_feed_request_duration_seconds as a native histogram in
-  ## addition to its classic le buckets. The metric is exported in hybrid
-  ## form either way; this only controls whether the ServiceMonitor asks
-  ## Prometheus to negotiate protobuf and pull the native representation too.
+  ## Scrape every rss2discord_* histogram (feed_request_duration_seconds,
+  ## feedgroup_reconcile_duration_seconds, message_overflow_chars) as a
+  ## native histogram. These metrics are exported native-only -- no classic
+  ## le buckets -- so this isn't an additive "also get the native view";
+  ## setting it false means Prometheus gets _count/_sum for these three
+  ## metrics with no histogram_quantile resolution at all, since there are
+  ## no classic buckets to fall back to.
   ## Requires a recent prometheus-operator (ServiceMonitorSpec scrapeProtocols/
   ## scrapeNativeHistograms/scrapeClassicHistograms fields, set at the top
   ## level of spec, not per-endpoint) and a Prometheus server with native
@@ -180,7 +183,8 @@ prometheus:
   ## whose ServiceMonitor CRD predates these fields, kubectl/Helm's default
   ## strict field validation will reject the apply with an "unknown field"
   ## error rather than silently pruning it — set this to false on such a
-  ## cluster instead of relying on pruning.
+  ## cluster (accepting the loss of histogram resolution) instead of relying
+  ## on pruning.
   scrapeNativeHistograms: true
 
 ## PrometheusRule alerting on the rss2discord_feed_operations_total metric.
