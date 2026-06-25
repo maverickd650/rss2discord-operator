@@ -20,9 +20,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	v1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
+	"k8s.io/client-go/tools/events"
 )
 
 // TestProcessFeed_InvalidFilterRegex asserts a feed with an unparsable
@@ -189,5 +191,167 @@ func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
 	}
 	if discordServer.MessageCount() != 0 {
 		t.Fatalf("expected the already-sent entry to be skipped, got %d messages", discordServer.MessageCount())
+	}
+}
+
+// TestPermanentBackoffDuration verifies the exponential formula and cap.
+func TestPermanentBackoffDuration(t *testing.T) {
+	base := 5 * time.Minute
+	cases := []struct {
+		retryCount int
+		wantCapped bool
+	}{
+		{retryCount: 1, wantCapped: false}, // 5m * 2^1 = 10m
+		{retryCount: 2, wantCapped: false}, // 5m * 2^2 = 20m
+		{retryCount: 6, wantCapped: false}, // 5m * 2^6 = 320m < 6h
+		{retryCount: 7, wantCapped: true},  // 5m * 2^7 = 640m > 6h
+		{retryCount: 62, wantCapped: true}, // overflow guard
+		{retryCount: 63, wantCapped: true}, // overflow guard
+	}
+	for _, tc := range cases {
+		got := permanentBackoffDuration(tc.retryCount, base)
+		if tc.wantCapped {
+			if got != maxPermanentBackoff {
+				t.Errorf("retryCount=%d: got %v, want cap %v", tc.retryCount, got, maxPermanentBackoff)
+			}
+		} else {
+			if got >= maxPermanentBackoff {
+				t.Errorf("retryCount=%d: got %v >= cap %v, expected uncapped", tc.retryCount, got, maxPermanentBackoff)
+			}
+			want := base * (1 << uint(tc.retryCount))
+			if got != want {
+				t.Errorf("retryCount=%d: got %v, want %v", tc.retryCount, got, want)
+			}
+		}
+	}
+}
+
+// TestProcessFeed_PermanentFetchFailureSetsBackoff asserts a permanent fetch
+// error (HTTP 404) sets BackoffUntil to an exponential offset, returns no
+// wantRetry (the group's normal interval is unaffected), and does not set a
+// sentinel on the first few retries.
+func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "processfeed-perm-backoff", "fg-perm-backoff"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	fg.Spec.RetryInterval = "5m"
+	notFoundErr := &rss.HTTPStatusError{StatusCode: 404, Status: http404Status}
+
+	before := time.Now().UTC()
+	wantRetry, rateLimitRetryAfter := (&FeedGroupReconciler{}).processFeed(
+		ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, "2026-01-01T00:00:00Z")
+	after := time.Now().UTC()
+
+	if wantRetry {
+		t.Fatal("expected no group-level retry for a permanent fetch failure")
+	}
+	if rateLimitRetryAfter != 0 {
+		t.Fatalf("expected no rate-limit backoff, got %v", rateLimitRetryAfter)
+	}
+
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	if fs.BackoffUntil == "" {
+		t.Fatal("expected BackoffUntil to be set after a permanent failure")
+	}
+	if fs.BackoffUntil == permanentBackoffSentinel {
+		t.Fatal("expected a concrete timestamp, not sentinel, on first failure")
+	}
+	until, err := time.Parse(time.RFC3339, fs.BackoffUntil)
+	if err != nil {
+		t.Fatalf("BackoffUntil %q is not RFC3339: %v", fs.BackoffUntil, err)
+	}
+	// RetryCount is 1 after first failure; backoff = 5m * 2^1 = 10m.
+	// RFC3339 truncates to seconds, so expand the window by one second on
+	// each side to avoid spurious failures when the wall clock sits near a
+	// second boundary.
+	wantMin := before.Add(10 * time.Minute).Truncate(time.Second)
+	wantMax := after.Add(10 * time.Minute).Add(time.Second)
+	if until.Before(wantMin) || until.After(wantMax) {
+		t.Errorf("BackoffUntil %v outside expected window [%v, %v]", until, wantMin, wantMax)
+	}
+}
+
+// TestProcessFeed_PermanentFetchFailureCapSetsSentinel asserts that once the
+// exponential backoff exceeds 6h, BackoffUntil is set to the sentinel and the
+// Warning Event fires.
+func TestProcessFeed_PermanentFetchFailureCapSetsSentinel(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "processfeed-perm-sentinel", "fg-perm-sentinel"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	fg.Spec.RetryInterval = "5m"
+	// RetryCount=6 means after the increment it becomes 7, and
+	// 5m * 2^7 = 640m > 6h, which should trigger the sentinel.
+	feedStatusFor(fg, feed.RSSUrl).RetryCount = 6
+	notFoundErr := &rss.HTTPStatusError{StatusCode: 404, Status: http404Status}
+
+	recorder := events.NewFakeRecorder(10)
+	wantRetry, _ := (&FeedGroupReconciler{Recorder: recorder}).processFeed(
+		ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, "2026-01-01T00:00:00Z")
+
+	if wantRetry {
+		t.Fatal("expected no group-level retry for a capped permanent failure")
+	}
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	if fs.BackoffUntil != permanentBackoffSentinel {
+		t.Errorf("BackoffUntil = %q, want sentinel %q", fs.BackoffUntil, permanentBackoffSentinel)
+	}
+	select {
+	case <-recorder.Events:
+		// good: Warning Event fired
+	default:
+		t.Fatal("expected Warning Event when sentinel is set")
+	}
+}
+
+// TestProcessFeed_PermanentFailureClearedOnSuccess asserts that a successful
+// fetch (including a 304) clears BackoffUntil set by a previous permanent
+// failure.
+func TestProcessFeed_PermanentFailureClearedOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "processfeed-perm-clear", "fg-perm-clear"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	// Simulate a feed that was previously in permanent backoff.
+	feedStatusFor(fg, feed.RSSUrl).BackoffUntil = "2030-01-01T00:00:00Z"
+	feedStatusFor(fg, feed.RSSUrl).RetryCount = 3
+
+	(&FeedGroupReconciler{}).processFeed(
+		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, "2026-01-01T00:00:00Z")
+
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	if fs.BackoffUntil != "" {
+		t.Errorf("BackoffUntil = %q, want empty after successful check", fs.BackoffUntil)
+	}
+	if fs.RetryCount != 0 {
+		t.Errorf("RetryCount = %d, want 0 after successful check", fs.RetryCount)
+	}
+}
+
+// TestClearPermanentBackoffs asserts the helper resets BackoffUntil and
+// RetryCount on every feed, including those not in backoff, so the first
+// permanentBackoffDuration call after a spec change uses a fresh RetryCount.
+func TestClearPermanentBackoffs(t *testing.T) {
+	fg, _ := newMetricsFeedGroup("clear-backoff-ns", "clear-backoff", "")
+	fg.Spec.Feeds = append(fg.Spec.Feeds, v1alpha1.FeedSpec{RSSUrl: "https://other.example.com/feed.xml"})
+	ensureFeedStatuses(fg)
+
+	feedStatusFor(fg, exampleFeedURL).BackoffUntil = permanentBackoffSentinel
+	feedStatusFor(fg, exampleFeedURL).RetryCount = 7
+	feedStatusFor(fg, "https://other.example.com/feed.xml").RetryCount = 2
+
+	clearPermanentBackoffs(fg)
+
+	for _, fs := range fg.Status.Feeds {
+		if fs.BackoffUntil != "" {
+			t.Errorf("feed %s: BackoffUntil = %q, want empty", fs.RSSUrl, fs.BackoffUntil)
+		}
+		if fs.RetryCount != 0 {
+			t.Errorf("feed %s: RetryCount = %d, want 0", fs.RSSUrl, fs.RetryCount)
+		}
 	}
 }

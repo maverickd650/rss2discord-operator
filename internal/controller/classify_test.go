@@ -28,6 +28,10 @@ import (
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
 )
 
+// http404Status is the HTTP status string for a 404 Not Found response,
+// shared across classify_test.go and processfeed_test.go to satisfy goconst.
+const http404Status = "404 Not Found"
+
 // timeoutError is a minimal net.Error whose Timeout() reports true, standing
 // in for the *url.Error a real client.Do timeout would surface (which itself
 // wraps a timeout net.Error -- errors.As unwraps through that the same way).
@@ -43,7 +47,7 @@ func TestClassifyFetchError(t *testing.T) {
 		err  error
 		want failureClass
 	}{
-		{reasonHTTP404, &rss.HTTPStatusError{StatusCode: 404, Status: "404 Not Found"}, classNotFound},
+		{reasonHTTP404, &rss.HTTPStatusError{StatusCode: 404, Status: http404Status}, classNotFound},
 		{reasonHTTP410, &rss.HTTPStatusError{StatusCode: 410, Status: "410 Gone"}, classGone},
 		{reasonRateLimited, &rss.HTTPStatusError{StatusCode: 429, Status: "429 Too Many Requests"}, classRateLimited},
 		{reasonServerError, &rss.HTTPStatusError{StatusCode: 503, Status: "503 Service Unavailable"}, classServerError},
@@ -70,7 +74,7 @@ func TestClassifySendError(t *testing.T) {
 		want failureClass
 	}{
 		{reasonRateLimited, &discord.RateLimitError{RetryAfter: time.Second}, classRateLimited},
-		{reasonWebhookInvalid, &discord.HTTPStatusError{StatusCode: 404, Status: "404 Not Found"}, classWebhookInvalid},
+		{reasonWebhookInvalid, &discord.HTTPStatusError{StatusCode: 404, Status: http404Status}, classWebhookInvalid},
 		{reasonHTTP410, &discord.HTTPStatusError{StatusCode: 410, Status: "410 Gone"}, classGone},
 		{reasonServerError, &discord.HTTPStatusError{StatusCode: 500, Status: "500 Internal Server Error"}, classServerError},
 		{reasonTimeout, fmt.Errorf("send: %w", timeoutError{}), classTimeout},

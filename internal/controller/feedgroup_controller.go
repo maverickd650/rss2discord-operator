@@ -54,6 +54,18 @@ import (
 
 const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
 
+// maxPermanentBackoff is the ceiling for per-feed exponential backoff on
+// permanent fetch failures (e.g. HTTP 404). Once the computed backoff would
+// exceed this, the feed's BackoffUntil is set to permanentBackoffSentinel and
+// it is excluded from all future reconciles until the FeedGroup spec changes.
+const maxPermanentBackoff = 6 * time.Hour
+
+// permanentBackoffSentinel is the BackoffUntil value stored once a permanently
+// failed feed has exhausted its exponential backoff. It is a date far enough in
+// the future that it will never be reached in practice; a generation bump on
+// the FeedGroup spec is the only intended recovery path.
+const permanentBackoffSentinel = "9999-01-01T00:00:00Z"
+
 // maxLastSentPerFeed bounds how many sent-entry hashes are retained per feed
 // in Status.LastSent. Without a cap this map grows by one key per sent
 // message forever, bloating the FeedGroup status subresource indefinitely.
@@ -126,6 +138,17 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	ensureFeedStatuses(&feedGroup)
 
+	// A spec change (generation bump) is the intended recovery path for feeds
+	// that have been placed in permanent backoff (BackoffUntil set to the
+	// sentinel). Clear BackoffUntil and RetryCount for every feed so the new
+	// generation gets a fresh retry cycle; without resetting RetryCount the
+	// first retry after clearing BackoffUntil would compute a backoff of
+	// base*2^oldRetryCount, which may exceed maxPermanentBackoff and
+	// immediately re-sentinel the feed.
+	if feedGroup.Generation > feedGroup.Status.ObservedGeneration {
+		clearPermanentBackoffs(&feedGroup)
+	}
+
 	// Snapshot status after ensureFeedStatuses above (which only normalizes
 	// existing state) but before anything that reflects this reconcile's
 	// outcome, so requeueWithStatus can skip the API write entirely when
@@ -155,10 +178,21 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	discordClient := discordBuilder(webhookURL)
 
+	reconcileNow := time.Now().UTC()
 	activeFeeds := make([]v1alpha1.FeedSpec, 0, len(feedGroup.Spec.Feeds))
 	for _, feed := range feedGroup.Spec.Feeds {
 		if feed.RSSUrl == "" || feed.Paused {
 			continue
+		}
+		// Skip feeds that are in permanent-failure backoff. The skip happens
+		// here, before the fetch fan-out, so backed-off feeds emit no metrics
+		// and incur no outbound HTTP calls during their backoff window.
+		// A malformed BackoffUntil is treated as "not in backoff" so a bad
+		// value can never permanently wedge a feed without a spec change.
+		if fs := feedStatusFor(&feedGroup, feed.RSSUrl); fs != nil && fs.BackoffUntil != "" {
+			if until, err := time.Parse(time.RFC3339, fs.BackoffUntil); err == nil && reconcileNow.Before(until) {
+				continue
+			}
 		}
 		activeFeeds = append(activeFeeds, feed)
 	}
@@ -256,14 +290,36 @@ func (r *FeedGroupReconciler) processFeed(
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionFalse,
 			class.conditionReason, fetchErr.Error(), feedGroup.Generation)
 
+		if class.permanent {
+			// Permanent failures (404, 410, bad XML, etc.) won't self-heal on
+			// the normal retry schedule, so use exponential backoff to reduce
+			// polling instead of the flat RetryInterval. The group's normal
+			// Interval drives other feeds; this feed handles its own timing via
+			// BackoffUntil checked in the active-feeds filter. wantRetry is
+			// false so a single permanent failure doesn't pull the whole group
+			// onto the faster RetryInterval.
+			base, _ := parseDurationWithDefault(feedGroup.Spec.RetryInterval, 5*time.Minute)
+			backoff := permanentBackoffDuration(fs.RetryCount, base)
+			if backoff >= maxPermanentBackoff {
+				// Cap reached: stop fetching until a spec change resets backoff.
+				// The Warning Event fires exactly once here (the first time the
+				// cap is hit); subsequent reconciles skip this feed entirely at
+				// the active-feeds filter, so this branch is never re-entered.
+				fs.BackoffUntil = permanentBackoffSentinel
+				r.recordPersistentFailure(feedGroup, feed.RSSUrl, "FetchFailed", fetchErr)
+			} else {
+				fs.BackoffUntil = time.Now().UTC().Add(backoff).Format(time.RFC3339)
+			}
+			return false, 0
+		}
+
 		maxRetries := maxRetryCount(feedGroup.Spec.Retries)
 		// Fire the persistent-failure Event exactly once, the reconcile this
 		// feed's retries are first exhausted -- not on every subsequent
-		// reconcile of a feed stuck failing the same way (e.g. a persistent
-		// 404). Without the == here (rather than >=), RetryCount keeps
-		// climbing past maxRetries forever and a single ongoing failure
-		// would otherwise generate a fresh Warning Event every poll
-		// interval, indefinitely.
+		// reconcile of a feed stuck failing the same way. Without the == here
+		// (rather than >=), RetryCount keeps climbing past maxRetries forever
+		// and a single ongoing failure would otherwise generate a fresh Warning
+		// Event every poll interval, indefinitely.
 		if fs.RetryCount == maxRetries {
 			r.recordPersistentFailure(feedGroup, feed.RSSUrl, "FetchFailed", fetchErr)
 		}
@@ -303,6 +359,7 @@ func (r *FeedGroupReconciler) processFeed(
 		persistValidators()
 		fs.LastError = ""
 		fs.RetryCount = 0
+		fs.BackoffUntil = ""
 		return false, 0
 	}
 
@@ -314,6 +371,7 @@ func (r *FeedGroupReconciler) processFeed(
 		persistValidators()
 		fs.LastError = ""
 		fs.RetryCount = 0
+		fs.BackoffUntil = ""
 		return false, 0
 	}
 
@@ -512,6 +570,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		fs.LastSeenEntry = entryIdentity(entry)
 		fs.LastError = ""
 		fs.RetryCount = 0
+		fs.BackoffUntil = ""
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionTrue,
 			"MessageSent", "Entry rendered and delivered to Discord", feedGroup.Generation)
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
@@ -1182,6 +1241,43 @@ func maxRetryCount(specRetries int) int {
 		return 1
 	}
 	return specRetries
+}
+
+// permanentBackoffDuration returns the exponential backoff for a permanent
+// fetch failure at retryCount (1-based, already incremented before call).
+// The formula is base * 2^retryCount, capped at maxPermanentBackoff. Callers
+// check whether the result >= maxPermanentBackoff to decide whether to set the
+// sentinel vs. a concrete timestamp.
+func permanentBackoffDuration(retryCount int, base time.Duration) time.Duration {
+	if retryCount < 1 {
+		retryCount = 1
+	}
+	// Avoid overflow: time.Duration is int64, so 1<<63 wraps negative.
+	// Guard the shift itself first, then check whether base*shift exceeds
+	// the cap before multiplying -- otherwise large retryCount values
+	// silently produce zero or negative durations.
+	if retryCount >= 63 {
+		return maxPermanentBackoff
+	}
+	shift := time.Duration(1 << uint(retryCount))
+	if base <= 0 || shift > maxPermanentBackoff/base {
+		return maxPermanentBackoff
+	}
+	return base * shift
+}
+
+// clearPermanentBackoffs resets BackoffUntil and RetryCount on every feed in
+// the group. Called when the FeedGroup spec generation advances, which is the
+// intended recovery path for feeds whose permanent backoff has been sentineled.
+// RetryCount is reset alongside BackoffUntil because leaving it at its old
+// value would cause the next permanentBackoffDuration call to compute a backoff
+// that immediately exceeds maxPermanentBackoff, re-sentineling the feed on the
+// very first retry after recovery.
+func clearPermanentBackoffs(feedGroup *v1alpha1.FeedGroup) {
+	for i := range feedGroup.Status.Feeds {
+		feedGroup.Status.Feeds[i].BackoffUntil = ""
+		feedGroup.Status.Feeds[i].RetryCount = 0
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

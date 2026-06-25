@@ -339,6 +339,14 @@ spec:
                     get feedgroup -o yaml` instead of requiring cross-referencing seven maps
                     by hand.
                   properties:
+                    backoffUntil:
+                      description: |-
+                        BackoffUntil is an RFC3339 timestamp before which this feed should not
+                        be fetched again. Set on permanent fetch failures (e.g. HTTP 404) using
+                        exponential backoff starting from Spec.RetryInterval; cleared on the
+                        next successful fetch or when the FeedGroup spec changes. An empty
+                        string means the feed is not in backoff.
+                      type: string
                     conditions:
                       description: |-
                         Conditions report this feed's health along the two independent
