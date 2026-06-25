@@ -40,7 +40,7 @@ func newMetricsFeedGroup(namespace, name, format string) (*v1alpha1.FeedGroup, v
 	fg.Namespace = namespace
 	fg.Name = name
 	fg.Spec.Feeds = []v1alpha1.FeedSpec{feed}
-	(&FeedGroupReconciler{}).setDefaultStatusMaps(fg)
+	ensureFeedStatuses(fg)
 	return fg, feed
 }
 
@@ -86,10 +86,10 @@ func TestProcessFeed_RecordsOutcomeMetric(t *testing.T) {
 		setup    func(d *MockDiscordServer)
 	}{
 		{name: "sent", outcome: outcomeSent, withFeed: true},
-		{name: "fetch_error", outcome: outcomeFetchError, fetchErr: errors.New("boom")},
+		{name: "fetch_error", outcome: fetchErrorOutcome(classOther), fetchErr: errors.New("boom")},
 		{
 			name:     "send_error",
-			outcome:  outcomeSendError,
+			outcome:  sendErrorOutcome(classServerError),
 			withFeed: true,
 			setup:    func(d *MockDiscordServer) { d.FailNextRequests(1, http.StatusInternalServerError) },
 		},

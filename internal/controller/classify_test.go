@@ -1,0 +1,117 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/maverickd650/rss2discord-operator/internal/discord"
+	"github.com/maverickd650/rss2discord-operator/internal/rss"
+)
+
+// timeoutError is a minimal net.Error whose Timeout() reports true, standing
+// in for the *url.Error a real client.Do timeout would surface (which itself
+// wraps a timeout net.Error -- errors.As unwraps through that the same way).
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+func TestClassifyFetchError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want failureClass
+	}{
+		{reasonHTTP404, &rss.HTTPStatusError{StatusCode: 404, Status: "404 Not Found"}, classNotFound},
+		{reasonHTTP410, &rss.HTTPStatusError{StatusCode: 410, Status: "410 Gone"}, classGone},
+		{reasonRateLimited, &rss.HTTPStatusError{StatusCode: 429, Status: "429 Too Many Requests"}, classRateLimited},
+		{reasonServerError, &rss.HTTPStatusError{StatusCode: 503, Status: "503 Service Unavailable"}, classServerError},
+		{reasonClientError, &rss.HTTPStatusError{StatusCode: 401, Status: "401 Unauthorized"}, classClientError},
+		{reasonTimeout, fmt.Errorf("fetch: %w", timeoutError{}), classTimeout},
+		{reasonDNSFailure, fmt.Errorf("fetch: %w", &net.DNSError{Err: "no such host", Name: "example.invalid"}), classDNSFailure},
+		{reasonParseError, fmt.Errorf("parse: %w", &xml.SyntaxError{Msg: "unexpected EOF"}), classParseError},
+		{reasonOther, errors.New("boom"), classOther},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyFetchError(tc.err); got != tc.want {
+				t.Fatalf("classifyFetchError(%v) = %+v, want %+v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClassifySendError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want failureClass
+	}{
+		{reasonRateLimited, &discord.RateLimitError{RetryAfter: time.Second}, classRateLimited},
+		{reasonWebhookInvalid, &discord.HTTPStatusError{StatusCode: 404, Status: "404 Not Found"}, classWebhookInvalid},
+		{reasonHTTP410, &discord.HTTPStatusError{StatusCode: 410, Status: "410 Gone"}, classGone},
+		{reasonServerError, &discord.HTTPStatusError{StatusCode: 500, Status: "500 Internal Server Error"}, classServerError},
+		{reasonTimeout, fmt.Errorf("send: %w", timeoutError{}), classTimeout},
+		{reasonOther, errors.New("boom"), classOther},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifySendError(tc.err); got != tc.want {
+				t.Fatalf("classifySendError(%v) = %+v, want %+v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDominantErrorReason_Deterministic asserts ties are broken by sort
+// order rather than Go's randomized map iteration, since
+// setFeedReachableCondition's output (and thus whether requeueWithStatus
+// thinks the status changed) must be stable across reconciles given the same
+// input.
+func TestDominantErrorReason_Deterministic(t *testing.T) {
+	reasons := map[string]string{
+		"https://a.example/feed": reasonHTTP404,
+		"https://b.example/feed": reasonTimeout,
+	}
+
+	for range 20 {
+		if got := dominantErrorReason(reasons); got != reasonHTTP404 {
+			t.Fatalf("dominantErrorReason() = %q, want %q (alphabetically first on a tie)", got, reasonHTTP404)
+		}
+	}
+}
+
+func TestDominantErrorReason_MostFrequentWins(t *testing.T) {
+	reasons := map[string]string{
+		"https://a.example/feed": reasonTimeout,
+		"https://b.example/feed": reasonTimeout,
+		"https://c.example/feed": reasonHTTP404,
+	}
+
+	if got := dominantErrorReason(reasons); got != reasonTimeout {
+		t.Fatalf("dominantErrorReason() = %q, want %q", got, reasonTimeout)
+	}
+}

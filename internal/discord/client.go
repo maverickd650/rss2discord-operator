@@ -129,6 +129,21 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("discord webhook rate limited, retry after %s", e.RetryAfter)
 }
 
+// HTTPStatusError is returned by SendMessage when Discord responds with a
+// non-2xx status other than 429 (which gets the more specific
+// RateLimitError). Carrying the status code as a typed field lets callers
+// classify the failure -- e.g. a 404 (webhook deleted) vs. a 5xx -- without
+// parsing Error()'s text.
+type HTTPStatusError struct {
+	StatusCode int
+	Status     string
+	Detail     string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("discord webhook returned %s%s", e.Status, e.Detail)
+}
+
 // parseRetryAfter parses Discord's Retry-After header, which is a number of
 // seconds (optionally fractional). It defaults to 1s if the header is
 // missing or malformed, so callers always back off at least briefly.
@@ -205,7 +220,11 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("discord webhook returned %s%s", resp.Status, decodeErrorDetail(resp.Body))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Detail:     decodeErrorDetail(resp.Body),
+		}
 	}
 
 	return nil

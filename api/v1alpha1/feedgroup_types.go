@@ -174,43 +174,83 @@ type FeedGroupSpec struct {
 	CatchUpLimit int `json:"catchUpLimit,omitempty"`
 }
 
-// FeedGroupStatus defines the observed state of a FeedGroup.
-type FeedGroupStatus struct {
-	// LastChecked is a map of feed URL to the last time it was successfully
-	// checked (RFC3339 timestamp). A 304 or a fetch with no new entries still
+// FeedStatus is the observed state of a single feed within a FeedGroup,
+// keyed by RSSUrl. Consolidating what used to be seven parallel
+// map[string]... fields on FeedGroupStatus (all keyed by the same URL) into
+// one struct per feed means a feed's full health -- timestamps, retry
+// count, and *why* it's failing -- reads as one coherent block in `kubectl
+// get feedgroup -o yaml` instead of requiring cross-referencing seven maps
+// by hand.
+type FeedStatus struct {
+	// RSSUrl identifies which feed (in FeedGroupSpec.Feeds) this status
+	// corresponds to. Acts as the list-map merge key.
+	RSSUrl string `json:"rssUrl"`
+
+	// LastChecked is the last time this feed was successfully checked
+	// (RFC3339 timestamp). A 304 or a fetch with no new entries still
 	// counts as a successful check; a failed fetch does not advance it.
 	// +optional
-	LastChecked map[string]string `json:"lastChecked,omitempty"`
+	LastChecked string `json:"lastChecked,omitempty"`
 
-	// LastSeenEntry is a map of feed URL to the last seen entry identifier (GUID or Link).
-	// Used to fetch only new entries after restarts.
+	// LastSeenEntry is the last seen entry identifier (GUID or Link) for
+	// this feed. Used to fetch only new entries after restarts.
 	// +optional
-	LastSeenEntry map[string]string `json:"lastSeenEntry,omitempty"`
+	LastSeenEntry string `json:"lastSeenEntry,omitempty"`
 
-	// LastSent is a map of feed URL to a map of entry hash to timestamp (RFC3339).
-	// Tracks which entries have been sent to Discord to avoid duplicates.
+	// LastSent is a map of entry hash to timestamp (RFC3339), tracking
+	// which entries have been sent to Discord to avoid duplicates.
 	// +optional
-	LastSent map[string]map[string]string `json:"lastSent,omitempty"`
+	LastSent map[string]string `json:"lastSent,omitempty"`
 
-	// LastError is a map of feed URL to the last error encountered.
+	// LastError is the last error message encountered for this feed, from
+	// whichever of fetch/render/send most recently failed. See Conditions
+	// for a structured, machine-readable breakdown of which stage failed
+	// and why.
 	// +optional
-	LastError map[string]string `json:"lastError,omitempty"`
+	LastError string `json:"lastError,omitempty"`
 
-	// FeedETag is a map of feed URL to the ETag header from its last fetch.
-	// Sent back as If-None-Match on the next fetch so an unchanged feed
-	// costs a 304 response instead of a full re-download and re-parse.
+	// ETag is the ETag header from this feed's last fetch. Sent back as
+	// If-None-Match on the next fetch so an unchanged feed costs a 304
+	// response instead of a full re-download and re-parse.
 	// +optional
-	FeedETag map[string]string `json:"feedETag,omitempty"`
+	ETag string `json:"etag,omitempty"`
 
-	// FeedLastModified is a map of feed URL to the Last-Modified header from
-	// its last fetch. Sent back as If-Modified-Since on the next fetch,
-	// alongside FeedETag.
+	// LastModified is the Last-Modified header from this feed's last fetch.
+	// Sent back as If-Modified-Since on the next fetch, alongside ETag.
 	// +optional
-	FeedLastModified map[string]string `json:"feedLastModified,omitempty"`
+	LastModified string `json:"lastModified,omitempty"`
 
-	// RetryCount is a map of feed URL to the number of consecutive retries.
+	// RetryCount is the number of consecutive retries since this feed last
+	// succeeded.
 	// +optional
-	RetryCount map[string]int `json:"retryCount,omitempty"`
+	RetryCount int `json:"retryCount,omitempty"`
+
+	// Conditions report this feed's health along the two independent
+	// stages a delivery passes through: FeedConditionTypeReachable (was the
+	// feed itself fetchable) and FeedConditionTypeDelivered (did rendering
+	// and sending to Discord succeed). Each carries a machine-readable
+	// Reason (e.g. "HTTP404", "Timeout", "WebhookInvalid") set by
+	// internal/controller/classify.go, so a feed stuck on a permanent 404
+	// is distinguishable at a glance from a misconfigured webhook, without
+	// parsing LastError's free text.
+	// +optional
+	// +patchMergeKey=type
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+}
+
+// FeedGroupStatus defines the observed state of a FeedGroup.
+type FeedGroupStatus struct {
+	// Feeds is the observed status of every feed in Spec.Feeds, keyed by
+	// RSSUrl.
+	// +optional
+	// +patchMergeKey=rssUrl
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=rssUrl
+	Feeds []FeedStatus `json:"feeds,omitempty" patchStrategy:"merge" patchMergeKey:"rssUrl"`
 
 	// ObservedGeneration is the most recent generation observed for this FeedGroup
 	// by the controller.
@@ -231,10 +271,34 @@ type FeedGroupStatus struct {
 // reconciliation completed without errors across all of its feeds.
 const ConditionTypeReady = "Ready"
 
+// ConditionTypeFeedReachable indicates whether every feed in the FeedGroup
+// was reachable on its last fetch attempt. Unlike Ready, this is scoped
+// specifically to fetch failures (not Discord send/render failures), so a
+// feed returning a persistent 404 is distinguishable from, say, the webhook
+// being misconfigured. Its Reason summarizes the most common
+// FeedConditionTypeReachable Reason across Status.Feeds.
+const ConditionTypeFeedReachable = "FeedReachable"
+
+// FeedConditionTypeReachable indicates whether a single feed (FeedStatus)
+// was reachable on its last fetch attempt. Reason is one of the
+// classification reasons set in internal/controller/classify.go (e.g.
+// "HTTP404", "Timeout", "DNSFailure").
+const FeedConditionTypeReachable = "Reachable"
+
+// FeedConditionTypeDelivered indicates whether a single feed's (FeedStatus)
+// last attempted entry was successfully rendered and sent to Discord.
+// Unset (no condition of this type present) means the feed hasn't attempted
+// a delivery yet -- e.g. it has never had a new entry. Reason is one of the
+// classification reasons set in internal/controller/classify.go, or
+// "RenderError" for a template failure.
+const FeedConditionTypeDelivered = "Delivered"
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=feedgroups,scope=Namespaced
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Reachable",type="string",JSONPath=".status.conditions[?(@.type=='FeedReachable')].status"
+// +kubebuilder:printcolumn:name="Reason",type="string",JSONPath=".status.conditions[?(@.type=='FeedReachable')].reason"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // FeedGroup is the Schema for the feedgroups API.

@@ -20,7 +20,7 @@ spec:
     - alert: RSS2DiscordFeedFetchErrors
       expr: |-
         sum by (namespace, name) (
-          rate(rss2discord_feed_operations_total{outcome="fetch_error"}[{{ .Values.prometheusRule.rateInterval }}])
+          rate(rss2discord_feed_operations_total{outcome=~"fetch_error_.+"}[{{ .Values.prometheusRule.rateInterval }}])
         ) > 0
       for: {{ .Values.prometheusRule.for }}
       labels:
@@ -48,7 +48,7 @@ spec:
     - alert: RSS2DiscordFeedSendErrors
       expr: |-
         sum by (namespace, name) (
-          rate(rss2discord_feed_operations_total{outcome="send_error"}[{{ .Values.prometheusRule.rateInterval }}])
+          rate(rss2discord_feed_operations_total{outcome=~"send_error_.+"}[{{ .Values.prometheusRule.rateInterval }}])
         ) > 0
       for: {{ .Values.prometheusRule.for }}
       labels:

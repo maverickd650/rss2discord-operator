@@ -124,10 +124,9 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	r.setDefaultStatusMaps(&feedGroup)
-	pruneRemovedFeedStatus(&feedGroup)
+	ensureFeedStatuses(&feedGroup)
 
-	// Snapshot status after the maps/pruning above (which only normalize
+	// Snapshot status after ensureFeedStatuses above (which only normalizes
 	// existing state) but before anything that reflects this reconcile's
 	// outcome, so requeueWithStatus can skip the API write entirely when
 	// nothing actually changed.
@@ -136,15 +135,13 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	webhookURL, err := r.resolveWebhookURL(ctx, &feedGroup)
 	if err != nil {
 		log.Error(err, "failed to resolve Discord webhook URL")
-		feedGroup.Status.LastError["webhook"] = err.Error()
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err)
 	}
 
 	if webhookURL == "" {
 		err = fmt.Errorf("discord webhook URL is empty")
 		log.Error(err, "invalid webhook secret")
-		feedGroup.Status.LastError["webhook"] = err.Error()
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -185,9 +182,10 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			fs := feedStatusFor(&feedGroup, rssURL)
 			validators := rss.CacheValidators{
-				ETag:         feedGroup.Status.FeedETag[rssURL],
-				LastModified: feedGroup.Status.FeedLastModified[rssURL],
+				ETag:         fs.ETag,
+				LastModified: fs.LastModified,
 			}
 			start := time.Now()
 			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL, validators)
@@ -217,7 +215,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if discordRetryAfter > 0 {
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, "", discordRetryAfter)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, "", discordRetryAfter, nil)
 	}
 
 	interval := feedGroup.Spec.Interval
@@ -227,13 +225,13 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		fallback = 5 * time.Minute
 	}
 
-	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback)
+	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback, nil)
 }
 
 // processFeed fetches/filters/sends entries for a single feed and updates
-// feedGroup's status maps accordingly. It returns whether the reconcile
-// should retry sooner than the normal interval, and, if Discord rate
-// limited the webhook, how long to wait before the next attempt.
+// its FeedStatus accordingly. It returns whether the reconcile should retry
+// sooner than the normal interval, and, if Discord rate limited the
+// webhook, how long to wait before the next attempt.
 func (r *FeedGroupReconciler) processFeed(
 	ctx context.Context,
 	feedGroup *v1alpha1.FeedGroup,
@@ -244,25 +242,32 @@ func (r *FeedGroupReconciler) processFeed(
 	now string,
 ) (wantRetry bool, rateLimitRetryAfter time.Duration) {
 	log := logf.FromContext(ctx)
-
-	if _, ok := feedGroup.Status.LastSent[feed.RSSUrl]; !ok {
-		feedGroup.Status.LastSent[feed.RSSUrl] = map[string]string{}
-	}
+	fs := feedStatusFor(feedGroup, feed.RSSUrl)
 
 	if fetchErr != nil {
 		// LastChecked deliberately doesn't advance here: it tracks the last
 		// *successful* check, so a feed stuck failing shows an aging
 		// LastChecked rather than looking freshly checked every retry.
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
-		feedGroup.Status.LastError[feed.RSSUrl] = fetchErr.Error()
-		feedGroup.Status.RetryCount[feed.RSSUrl]++
-		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeFetchError).Inc()
+		class := classifyFetchError(fetchErr)
+		fs.LastError = fetchErr.Error()
+		fs.RetryCount++
+		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, fetchErrorOutcome(class)).Inc()
+		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionFalse,
+			class.conditionReason, fetchErr.Error(), feedGroup.Generation)
 
-		retry := feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries)
-		if !retry {
+		maxRetries := maxRetryCount(feedGroup.Spec.Retries)
+		// Fire the persistent-failure Event exactly once, the reconcile this
+		// feed's retries are first exhausted -- not on every subsequent
+		// reconcile of a feed stuck failing the same way (e.g. a persistent
+		// 404). Without the == here (rather than >=), RetryCount keeps
+		// climbing past maxRetries forever and a single ongoing failure
+		// would otherwise generate a fresh Warning Event every poll
+		// interval, indefinitely.
+		if fs.RetryCount == maxRetries {
 			r.recordPersistentFailure(feedGroup, feed.RSSUrl, "FetchFailed", fetchErr)
 		}
-		return retry, 0
+		return fs.RetryCount < maxRetries, 0
 	}
 
 	// Persisting the new validators is deferred until the end of this
@@ -272,11 +277,18 @@ func (r *FeedGroupReconciler) processFeed(
 	// silently dropping it.
 	persistValidators := func() {
 		if fetchResult.ETag != "" {
-			feedGroup.Status.FeedETag[feed.RSSUrl] = fetchResult.ETag
+			fs.ETag = fetchResult.ETag
 		}
 		if fetchResult.LastModified != "" {
-			feedGroup.Status.FeedLastModified[feed.RSSUrl] = fetchResult.LastModified
+			fs.LastModified = fetchResult.LastModified
 		}
+	}
+
+	markFetchSucceeded := func() {
+		fs.LastChecked = now
+		markFeedCheckSuccess(feedGroup)
+		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionTrue,
+			"FetchSucceeded", "Feed fetched successfully", feedGroup.Generation)
 	}
 
 	if fetchResult.NotModified {
@@ -287,30 +299,30 @@ func (r *FeedGroupReconciler) processFeed(
 		// else changed (requeueWithStatus diffs on the whole status), so a
 		// quiet feed now costs one status write per poll interval instead of
 		// zero.
-		feedGroup.Status.LastChecked[feed.RSSUrl] = now
-		markFeedCheckSuccess(feedGroup)
+		markFetchSucceeded()
 		persistValidators()
-		delete(feedGroup.Status.LastError, feed.RSSUrl)
-		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		fs.LastError = ""
+		fs.RetryCount = 0
 		return false, 0
 	}
 
-	feedGroup.Status.LastChecked[feed.RSSUrl] = now
-	markFeedCheckSuccess(feedGroup)
+	markFetchSucceeded()
 
 	entries := fetchResult.Entries
 	if len(entries) == 0 {
 		// Nothing to send, so it's always safe to persist.
 		persistValidators()
-		delete(feedGroup.Status.LastError, feed.RSSUrl)
-		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		fs.LastError = ""
+		fs.RetryCount = 0
 		return false, 0
 	}
 
 	filterRegex, err := compileFilterRegex(feed.Filter)
 	if err != nil {
 		log.Error(err, "invalid filter regex", "url", feed.RSSUrl)
-		feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+		fs.LastError = err.Error()
+		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+			reasonConfigError, err.Error(), feedGroup.Generation)
 		return false, 0
 	}
 
@@ -324,7 +336,9 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 	if err != nil {
 		log.Error(err, "invalid Discord message template", "url", feed.RSSUrl)
-		feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+		fs.LastError = err.Error()
+		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+			reasonConfigError, err.Error(), feedGroup.Generation)
 		return true, 0
 	}
 
@@ -332,7 +346,9 @@ func (r *FeedGroupReconciler) processFeed(
 		threadNameTmpl, err = compileTemplate("discordThreadName", feed.ForumThreadName, "")
 		if err != nil {
 			log.Error(err, "invalid Discord forum thread name template", "url", feed.RSSUrl)
-			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+			fs.LastError = err.Error()
+			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+				reasonConfigError, err.Error(), feedGroup.Generation)
 			return true, 0
 		}
 	}
@@ -353,7 +369,7 @@ func (r *FeedGroupReconciler) processFeed(
 		return cmp.Compare(b.Seq, a.Seq)
 	})
 
-	lastSeenID := feedGroup.Status.LastSeenEntry[feed.RSSUrl]
+	lastSeenID := fs.LastSeenEntry
 	hasSeenID := lastSeenID != ""
 	if hasSeenID && !entriesContainID(entries, lastSeenID) {
 		// The stored ID has scrolled out of the feed's window (or the feed
@@ -367,10 +383,10 @@ func (r *FeedGroupReconciler) processFeed(
 		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
 	}
 
-	wantRetry, rateLimitRetryAfter = r.sendNewEntries(ctx, feedGroup, feed, entries, hasSeenID, lastSeenID,
+	wantRetry, rateLimitRetryAfter = r.sendNewEntries(ctx, feedGroup, fs, feed, entries, hasSeenID, lastSeenID,
 		filterRegex, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, discordClient, now)
 
-	pruneLastSent(feedGroup.Status.LastSent[feed.RSSUrl], maxLastSentPerFeed)
+	pruneLastSent(fs.LastSent, maxLastSentPerFeed)
 
 	// Only persist now that every entry from this fetch was either sent or
 	// filtered out; if anything is still pending retry, keep the old
@@ -385,10 +401,11 @@ func (r *FeedGroupReconciler) processFeed(
 
 // sendNewEntries scans entries in order, skipping forward past lastSeenID
 // (if hasSeenID is set) before sending anything, then sends each not-yet-sent
-// entry that passes the filter and updates feedGroup's status as it goes.
+// entry that passes the filter and updates fs (feed's FeedStatus) as it goes.
 func (r *FeedGroupReconciler) sendNewEntries(
 	ctx context.Context,
 	feedGroup *v1alpha1.FeedGroup,
+	fs *v1alpha1.FeedStatus,
 	feed v1alpha1.FeedSpec,
 	entries []rss.Entry,
 	hasSeenID bool,
@@ -411,7 +428,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		}
 
 		entryKey := computeEntryKey(entry)
-		if _, alreadySent := feedGroup.Status.LastSent[feed.RSSUrl][entryKey]; alreadySent {
+		if _, alreadySent := fs.LastSent[entryKey]; alreadySent {
 			continue
 		}
 
@@ -422,18 +439,26 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		discordMessage, err := buildDiscordMessage(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, &feed, entry)
 		if err != nil {
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
-			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
-			feedGroup.Status.RetryCount[feed.RSSUrl]++
+			fs.LastError = err.Error()
+			fs.RetryCount++
 			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRenderError).Inc()
+			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+				reasonRenderError, err.Error(), feedGroup.Generation)
 
 			// A render error is deterministic for a given entry+template, so
 			// once retries are exhausted, retrying forever would just spin
 			// at RetryInterval without ever making progress. Treat it like a
 			// send-side persistent failure: stop retrying and surface an
-			// Event instead of looping indefinitely.
-			if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
+			// Event instead of looping indefinitely. The Event only fires
+			// the reconcile RetryCount first reaches maxRetries (== rather
+			// than >=), since this entry is reprocessed every reconcile
+			// until something changes -- without the equality check, a
+			// stuck template would emit a fresh Warning Event every poll
+			// interval forever.
+			maxRetries := maxRetryCount(feedGroup.Spec.Retries)
+			if fs.RetryCount < maxRetries {
 				wantRetry = true
-			} else {
+			} else if fs.RetryCount == maxRetries {
 				r.recordPersistentFailure(feedGroup, feed.RSSUrl, "RenderFailed", err)
 			}
 			continue
@@ -445,12 +470,14 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			Observe(time.Since(sendStart).Seconds())
 		if err != nil {
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
-			feedGroup.Status.LastError[feed.RSSUrl] = err.Error()
+			fs.LastError = err.Error()
 
 			var rateLimitErr *discord.RateLimitError
 			if errors.As(err, &rateLimitErr) {
 				wantRetry = true
 				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRateLimited).Inc()
+				setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+					reasonRateLimited, err.Error(), feedGroup.Generation)
 				if rateLimitErr.RetryAfter > rateLimitRetryAfter {
 					rateLimitRetryAfter = rateLimitErr.RetryAfter
 				}
@@ -461,21 +488,32 @@ func (r *FeedGroupReconciler) sendNewEntries(
 				// retried after the requeue backs off for RetryAfter.
 				break
 			} else {
-				feedGroup.Status.RetryCount[feed.RSSUrl]++
-				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSendError).Inc()
-				if feedGroup.Status.RetryCount[feed.RSSUrl] < maxRetryCount(feedGroup.Spec.Retries) {
+				class := classifySendError(err)
+				fs.RetryCount++
+				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, sendErrorOutcome(class)).Inc()
+				setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+					class.conditionReason, err.Error(), feedGroup.Generation)
+
+				// See the matching comment on the render-error branch above:
+				// fire the persistent-failure Event only the reconcile
+				// RetryCount first reaches maxRetries, not on every
+				// subsequent reconcile of an entry stuck failing to send.
+				maxRetries := maxRetryCount(feedGroup.Spec.Retries)
+				if fs.RetryCount < maxRetries {
 					wantRetry = true
-				} else {
+				} else if fs.RetryCount == maxRetries {
 					r.recordPersistentFailure(feedGroup, feed.RSSUrl, "SendFailed", err)
 				}
 			}
 			continue
 		}
 
-		feedGroup.Status.LastSent[feed.RSSUrl][entryKey] = now
-		feedGroup.Status.LastSeenEntry[feed.RSSUrl] = entryIdentity(entry)
-		delete(feedGroup.Status.LastError, feed.RSSUrl)
-		feedGroup.Status.RetryCount[feed.RSSUrl] = 0
+		fs.LastSent[entryKey] = now
+		fs.LastSeenEntry = entryIdentity(entry)
+		fs.LastError = ""
+		fs.RetryCount = 0
+		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionTrue,
+			"MessageSent", "Entry rendered and delivered to Discord", feedGroup.Generation)
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
 	}
 
@@ -524,77 +562,67 @@ func (r *FeedGroupReconciler) resolveWebhookURL(ctx context.Context, feedGroup *
 	return strings.TrimSpace(string(value)), nil
 }
 
-func (r *FeedGroupReconciler) setDefaultStatusMaps(feedGroup *v1alpha1.FeedGroup) {
-	if feedGroup.Status.LastChecked == nil {
-		feedGroup.Status.LastChecked = map[string]string{}
+// ensureFeedStatuses rebuilds feedGroup.Status.Feeds to have exactly one
+// entry per feed in feedGroup.Spec.Feeds, in spec order: existing entries are
+// matched up by RSSUrl and carried over untouched, new feeds get a
+// zero-valued entry, and entries for feeds no longer in the spec are
+// dropped. This both initializes status on a fresh FeedGroup and prunes
+// stale entries left behind by an edited/removed feed (the same
+// unbounded-growth problem maxLastSentPerFeed guards against one level
+// down) in a single pass -- there's only one place left that needs to know
+// about every per-feed status field, instead of the seven parallel
+// map[string]... fields this used to require initializing and pruning in
+// lockstep. Paused feeds still get an entry, since they're still part of the
+// spec; rebuilding in spec order also means Status.Feeds' order is stable
+// across reconciles whenever the spec doesn't change, which
+// apiequality.Semantic.DeepEqual (used by requeueWithStatus to skip no-op
+// writes) needs to avoid seeing a reordered-but-otherwise-identical slice as
+// a change.
+func ensureFeedStatuses(feedGroup *v1alpha1.FeedGroup) {
+	existing := make(map[string]v1alpha1.FeedStatus, len(feedGroup.Status.Feeds))
+	for _, fs := range feedGroup.Status.Feeds {
+		existing[fs.RSSUrl] = fs
 	}
-	if feedGroup.Status.LastSeenEntry == nil {
-		feedGroup.Status.LastSeenEntry = map[string]string{}
+
+	rebuilt := make([]v1alpha1.FeedStatus, 0, len(feedGroup.Spec.Feeds))
+	for _, feed := range feedGroup.Spec.Feeds {
+		fs, ok := existing[feed.RSSUrl]
+		if !ok {
+			fs = v1alpha1.FeedStatus{RSSUrl: feed.RSSUrl}
+		}
+		if fs.LastSent == nil {
+			fs.LastSent = map[string]string{}
+		}
+		rebuilt = append(rebuilt, fs)
 	}
-	if feedGroup.Status.LastSent == nil {
-		feedGroup.Status.LastSent = map[string]map[string]string{}
-	}
-	if feedGroup.Status.LastError == nil {
-		feedGroup.Status.LastError = map[string]string{}
-	}
-	if feedGroup.Status.RetryCount == nil {
-		feedGroup.Status.RetryCount = map[string]int{}
-	}
-	if feedGroup.Status.FeedETag == nil {
-		feedGroup.Status.FeedETag = map[string]string{}
-	}
-	if feedGroup.Status.FeedLastModified == nil {
-		feedGroup.Status.FeedLastModified = map[string]string{}
-	}
+	feedGroup.Status.Feeds = rebuilt
 }
 
-// pruneRemovedFeedStatus deletes every per-feed-URL status entry that no
-// longer corresponds to a feed in feedGroup.Spec.Feeds. Without this, editing
-// or removing a feed leaves its LastChecked/LastSeenEntry/LastSent/LastError/
-// RetryCount/FeedETag/FeedLastModified entries in status forever, the same
-// unbounded-growth problem maxLastSentPerFeed guards against one level down.
-// Paused feeds keep their status, since they're still part of the spec.
-func pruneRemovedFeedStatus(feedGroup *v1alpha1.FeedGroup) {
-	specURLs := make(map[string]bool, len(feedGroup.Spec.Feeds))
-	for _, feed := range feedGroup.Spec.Feeds {
-		specURLs[feed.RSSUrl] = true
+// feedStatusFor returns the FeedStatus for url, which must already exist
+// (ensureFeedStatuses runs once at the start of every Reconcile and creates
+// an entry for every feed in Spec.Feeds, so any url drawn from Spec.Feeds is
+// guaranteed to be found).
+func feedStatusFor(feedGroup *v1alpha1.FeedGroup, url string) *v1alpha1.FeedStatus {
+	for i := range feedGroup.Status.Feeds {
+		if feedGroup.Status.Feeds[i].RSSUrl == url {
+			return &feedGroup.Status.Feeds[i]
+		}
 	}
+	return nil
+}
 
-	for url := range feedGroup.Status.LastChecked {
-		if !specURLs[url] {
-			delete(feedGroup.Status.LastChecked, url)
-		}
-	}
-	for url := range feedGroup.Status.LastSeenEntry {
-		if !specURLs[url] {
-			delete(feedGroup.Status.LastSeenEntry, url)
-		}
-	}
-	for url := range feedGroup.Status.LastSent {
-		if !specURLs[url] {
-			delete(feedGroup.Status.LastSent, url)
-		}
-	}
-	for url := range feedGroup.Status.LastError {
-		if !specURLs[url] {
-			delete(feedGroup.Status.LastError, url)
-		}
-	}
-	for url := range feedGroup.Status.RetryCount {
-		if !specURLs[url] {
-			delete(feedGroup.Status.RetryCount, url)
-		}
-	}
-	for url := range feedGroup.Status.FeedETag {
-		if !specURLs[url] {
-			delete(feedGroup.Status.FeedETag, url)
-		}
-	}
-	for url := range feedGroup.Status.FeedLastModified {
-		if !specURLs[url] {
-			delete(feedGroup.Status.FeedLastModified, url)
-		}
-	}
+// setFeedCondition is apimeta.SetStatusCondition scoped to a single feed's
+// Conditions, so call sites read as "what happened" rather than repeating
+// the metav1.Condition literal at every one of the half-dozen places a
+// fetch/render/send outcome needs to update Reachable or Delivered.
+func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.ConditionStatus, reason, message string, generation int64) {
+	apimeta.SetStatusCondition(&fs.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: generation,
+	})
 }
 
 // requeueWithStatus persists feedGroup's status and requeues after the given
@@ -602,14 +630,19 @@ func pruneRemovedFeedStatus(feedGroup *v1alpha1.FeedGroup) {
 // Status().Update call is skipped when the status hasn't actually changed
 // from original, since a conditional-GET 304 makes the common reconcile a
 // no-op that would otherwise still pay for a status write every interval.
-func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, original *v1alpha1.FeedGroupStatus, interval string, fallback time.Duration) (ctrl.Result, error) {
+// webhookErr, if non-nil, means the reconcile never got far enough to
+// process any feed (the webhook Secret couldn't be resolved); it takes over
+// the Ready condition unconditionally, since per-feed status is stale/empty
+// and would otherwise misreport as healthy.
+func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, original *v1alpha1.FeedGroupStatus, interval string, fallback time.Duration, webhookErr error) (ctrl.Result, error) {
 	duration, err := parseDurationWithDefault(interval, fallback)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	feedGroup.Status.ObservedGeneration = feedGroup.Generation
-	setReadyCondition(feedGroup)
+	setReadyCondition(feedGroup, webhookErr)
+	setFeedReachableCondition(feedGroup)
 
 	if apiequality.Semantic.DeepEqual(original, &feedGroup.Status) {
 		return ctrl.Result{RequeueAfter: duration}, nil
@@ -623,17 +656,32 @@ func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *
 }
 
 // setReadyCondition summarizes the outcome of a reconciliation into a single
-// "Ready" condition, leaving the existing per-feed status maps (LastError,
-// RetryCount, etc.) as the detailed source of truth.
-func setReadyCondition(feedGroup *v1alpha1.FeedGroup) {
+// "Ready" condition, leaving Status.Feeds (LastError, Conditions, etc.) as
+// the detailed source of truth for *which* feed and *why*. webhookErr, if
+// set, means the webhook Secret itself couldn't be resolved -- a
+// group-level failure that preempts any per-feed status, since no feed was
+// even attempted.
+func setReadyCondition(feedGroup *v1alpha1.FeedGroup, webhookErr error) {
+	if webhookErr != nil {
+		apimeta.SetStatusCondition(&feedGroup.Status.Conditions, metav1.Condition{
+			Type:               v1alpha1.ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "WebhookUnresolved",
+			Message:            webhookErr.Error(),
+			ObservedGeneration: feedGroup.Generation,
+		})
+		return
+	}
+
 	status := metav1.ConditionTrue
 	reason := "Reconciled"
 	message := "All feeds processed successfully"
 
-	if len(feedGroup.Status.LastError) > 0 {
+	failing := countFailingFeeds(feedGroup.Status.Feeds)
+	if failing > 0 {
 		status = metav1.ConditionFalse
 		reason = "FeedErrors"
-		message = fmt.Sprintf("%d feed(s) reporting errors", len(feedGroup.Status.LastError))
+		message = fmt.Sprintf("%d feed(s) reporting errors", failing)
 	}
 
 	apimeta.SetStatusCondition(&feedGroup.Status.Conditions, metav1.Condition{
@@ -643,6 +691,85 @@ func setReadyCondition(feedGroup *v1alpha1.FeedGroup) {
 		Message:            message,
 		ObservedGeneration: feedGroup.Generation,
 	})
+}
+
+// countFailingFeeds reports how many feeds currently have a non-empty
+// LastError.
+func countFailingFeeds(feeds []v1alpha1.FeedStatus) int {
+	count := 0
+	for _, fs := range feeds {
+		if fs.LastError != "" {
+			count++
+		}
+	}
+	return count
+}
+
+// setFeedReachableCondition reports whether every feed in feedGroup was
+// reachable on its last fetch attempt, with Reason set to the classification
+// (see classify.go) of the most common fetch failure across feeds -- e.g.
+// "HTTP404" for a group with several feeds stuck on a persistent 404. This
+// is narrower than Ready: it only reflects each feed's Reachable condition
+// (fetch failures), not Discord send/render failures (Delivered), so a
+// feed-side outage is distinguishable from a webhook misconfiguration.
+func setFeedReachableCondition(feedGroup *v1alpha1.FeedGroup) {
+	unreachable := map[string]string{}
+	for _, fs := range feedGroup.Status.Feeds {
+		cond := apimeta.FindStatusCondition(fs.Conditions, v1alpha1.FeedConditionTypeReachable)
+		if cond != nil && cond.Status == metav1.ConditionFalse {
+			unreachable[fs.RSSUrl] = cond.Reason
+		}
+	}
+
+	if len(unreachable) == 0 {
+		apimeta.SetStatusCondition(&feedGroup.Status.Conditions, metav1.Condition{
+			Type:               v1alpha1.ConditionTypeFeedReachable,
+			Status:             metav1.ConditionTrue,
+			Reason:             "AllFeedsReachable",
+			Message:            "All feeds were reachable on their last check",
+			ObservedGeneration: feedGroup.Generation,
+		})
+		return
+	}
+
+	reason := dominantErrorReason(unreachable)
+	apimeta.SetStatusCondition(&feedGroup.Status.Conditions, metav1.Condition{
+		Type:   v1alpha1.ConditionTypeFeedReachable,
+		Status: metav1.ConditionFalse,
+		Reason: reason,
+		Message: fmt.Sprintf("%d feed(s) unreachable; most common reason: %s",
+			len(unreachable), reason),
+		ObservedGeneration: feedGroup.Generation,
+	})
+}
+
+// dominantErrorReason returns the most frequent value in reasons (a map of
+// feed URL to classification Reason), so a FeedGroup with several feeds
+// failing differently still gets one representative Reason on its aggregate
+// condition rather than an arbitrary one. Ties are broken by sort order
+// (rather than Go's randomized map iteration) so the result -- and thus
+// whether the condition's Message actually changed -- is deterministic
+// across reconciles of the same status, which requeueWithStatus relies on to
+// skip no-op status writes.
+func dominantErrorReason(reasons map[string]string) string {
+	counts := make(map[string]int, len(reasons))
+	for _, reason := range reasons {
+		counts[reason]++
+	}
+
+	keys := make([]string, 0, len(counts))
+	for reason := range counts {
+		keys = append(keys, reason)
+	}
+	slices.Sort(keys)
+
+	best := keys[0]
+	for _, key := range keys[1:] {
+		if counts[key] > counts[best] {
+			best = key
+		}
+	}
+	return best
 }
 
 // trackingQueryParams lists query-string parameters added by analytics or

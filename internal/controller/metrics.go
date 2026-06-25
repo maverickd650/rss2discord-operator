@@ -36,6 +36,17 @@ const (
 // or send attempt) is counted under exactly one of these per processFeed
 // call, so an operator can see at a glance why a FeedGroup isn't posting
 // without reading controller logs.
+//
+// fetch_error and send_error are further split by failureClass.metricReason
+// (see classify.go) into fetch_error_<reason>/send_error_<reason> -- e.g.
+// fetch_error_not_found vs. fetch_error_timeout -- so a feed stuck on a
+// permanent 404 shows up as a distinct series rather than being
+// indistinguishable from one flapping on timeouts. outcomeFetchError and
+// outcomeSendError themselves are never recorded as an outcome value
+// directly, only used as the label prefix; existing dashboards/alerts that
+// matched the exact "fetch_error"/"send_error" values were updated to
+// "fetch_error.*"/"send_error.*" since Prometheus label regex matches are
+// fully anchored (see dist/chart).
 const (
 	outcomeSent        = "sent"
 	outcomeFetchError  = "fetch_error"
@@ -43,6 +54,16 @@ const (
 	outcomeRenderError = "render_error"
 	outcomeRateLimited = "rate_limited"
 )
+
+// fetchErrorOutcome and sendErrorOutcome build the diversified outcome label
+// for a classified fetch/send failure, e.g. "fetch_error_not_found".
+func fetchErrorOutcome(class failureClass) string {
+	return outcomeFetchError + "_" + class.metricReason
+}
+
+func sendErrorOutcome(class failureClass) string {
+	return outcomeSendError + "_" + class.metricReason
+}
 
 // feedOperationsTotal counts feed fetch/send outcomes per FeedGroup, so
 // `kubectl describe feedgroup` paired with this metric (or an alert on

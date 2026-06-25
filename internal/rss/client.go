@@ -45,6 +45,24 @@ type Entry struct {
 	Seq int
 }
 
+// HTTPStatusError is returned by FetchEntries when a feed responds with a
+// non-2xx, non-304 status. Carrying the status code as a typed field (rather
+// than only formatting it into the error string) lets callers classify the
+// failure -- e.g. a permanent 404 vs. a transient 503 -- without parsing
+// Error()'s text.
+type HTTPStatusError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("feed fetch failed: %s", e.Status)
+	}
+	return fmt.Sprintf("feed fetch failed: %s: %s", e.Status, e.Body)
+}
+
 // CacheValidators carries the conditional-GET validators returned by a
 // previous fetch of a feed, so a later fetch can ask the server "has this
 // changed since I last asked" instead of always re-downloading and
@@ -183,7 +201,11 @@ func (c *Client) FetchEntries(ctx context.Context, feedURL string, validators Ca
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return FetchResult{}, fmt.Errorf("feed fetch failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return FetchResult{}, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	limitedBody := io.LimitReader(resp.Body, maxFeedResponseBytes+1)
