@@ -1994,8 +1994,8 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate     string
 					guid        string
 				}{
-					title:       "Test",
-					description: "Test",
+					title:       "Backoff Skip Article",
+					description: "Backoff Skip Article",
 					link:        "https://example.com/test",
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "test-1",
