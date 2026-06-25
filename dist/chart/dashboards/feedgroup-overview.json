@@ -532,6 +532,7 @@
       "panels": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Computed from the native histogram representation of rss2discord_feed_request_duration_seconds, which is exported native-only (no classic le buckets). Requires the Prometheus server scraping this operator to have scrapeNativeHistograms enabled (the chart default).",
           "fieldConfig": {
             "defaults": {
               "color": { "mode": "palette-classic" },
@@ -560,19 +561,19 @@
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.50, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
               "legendFormat": "{{operation}} p50",
               "refId": "A"
             },
             {
               "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.95, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
               "legendFormat": "{{operation}} p95",
               "refId": "B"
             },
             {
               "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.99, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
               "legendFormat": "{{operation}} p99",
               "refId": "C"
             }
@@ -580,6 +581,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "The Heatmap panel renders the native histogram value type directly, so the query is a plain rate() with no le grouping and no format=heatmap.",
           "fieldConfig": {
             "defaults": { "custom": { "scaleDistribution": { "type": "linear" } }, "unit": "s" },
             "overrides": []
@@ -596,10 +598,101 @@
           "targets": [
             {
               "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "sum by (le) (rate(rss2discord_feed_request_duration_seconds_bucket{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
-              "format": "heatmap",
-              "legendFormat": "{{le}}",
+              "expr": "sum(rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
+              "legendFormat": "latency",
               "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Wall-clock time of a full reconcile (every feed's fetch and send for the FeedGroup), computed from the native histogram representation of rss2discord_feedgroup_reconcile_duration_seconds. A FeedGroup creeping toward its requeue interval shows up here before it starts missing it.",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisLabel": "seconds",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "mappings": [],
+              "unit": "s",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 48 },
+          "id": 27,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Reconcile Duration (p50/p95/p99)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.50, sum by (name) (rate(rss2discord_feedgroup_reconcile_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{name}} p50",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.95, sum by (name) (rate(rss2discord_feedgroup_reconcile_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{name}} p95",
+              "refId": "B"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.99, sum by (name) (rate(rss2discord_feedgroup_reconcile_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{name}} p99",
+              "refId": "C"
+            }
+          ]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "description": "Size of trimmed content on messages that overflowed Discord's length limit, computed from the native histogram representation of rss2discord_message_overflow_chars. Only entries that actually overflowed are observed, so this is silent (no series) for a FeedGroup whose content always fits.",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisLabel": "characters",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "mappings": [],
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 48 },
+          "id": 28,
+          "options": {
+            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "title": "Message Overflow Size (p50/p95)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.50, sum by (name) (rate(rss2discord_message_overflow_chars{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{name}} p50",
+              "refId": "A"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.95, sum by (name) (rate(rss2discord_message_overflow_chars{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
+              "legendFormat": "{{name}} p95",
+              "refId": "B"
             }
           ]
         }
@@ -607,7 +700,7 @@
     },
     {
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 },
       "id": 17,
       "title": "Operator Health",
       "type": "row",
@@ -631,7 +724,7 @@
             },
             "overrides": []
           },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 49 },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 58 },
           "id": 18,
           "options": {
             "colorMode": "value",
@@ -664,7 +757,7 @@
             },
             "overrides": []
           },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 49 },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 58 },
           "id": 19,
           "options": {
             "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -693,7 +786,7 @@
             },
             "overrides": []
           },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 49 },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 58 },
           "id": 20,
           "options": {
             "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -722,7 +815,7 @@
             },
             "overrides": []
           },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 57 },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 66 },
           "id": 21,
           "options": {
             "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
@@ -751,7 +844,7 @@
             },
             "overrides": []
           },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 57 },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 66 },
           "id": 22,
           "options": {
             "colorMode": "value",
@@ -767,89 +860,6 @@
             {
               "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
               "expr": "sum(controller_runtime_active_workers{controller=\"feedgroup\"})",
-              "refId": "A"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
-      "id": 24,
-      "title": "Performance (Native Histograms)",
-      "type": "row",
-      "panels": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "description": "Same latency data as \"Fetch & Send Latency (p50/p95/p99)\", computed from the native histogram representation of rss2discord_feed_request_duration_seconds instead of the classic le buckets. Requires the Prometheus server scraping this operator to have scrapeNativeHistograms enabled.",
-          "fieldConfig": {
-            "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": {
-                "axisLabel": "seconds",
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "spanNulls": false
-              },
-              "mappings": [],
-              "unit": "s",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 67 },
-          "id": 25,
-          "options": {
-            "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-            "tooltip": { "mode": "multi", "sort": "desc" }
-          },
-          "title": "Fetch & Send Latency (p50/p95/p99) — Native Histogram",
-          "type": "timeseries",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.50, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
-              "legendFormat": "{{operation}} p50",
-              "refId": "A"
-            },
-            {
-              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.95, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
-              "legendFormat": "{{operation}} p95",
-              "refId": "B"
-            },
-            {
-              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "histogram_quantile(0.99, sum by (operation) (rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval])))",
-              "legendFormat": "{{operation}} p99",
-              "refId": "C"
-            }
-          ]
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "description": "Native-histogram equivalent of \"Latency Heatmap\". The Heatmap panel renders the native histogram value type directly, so the query is a plain rate() with no le grouping and no format=heatmap.",
-          "fieldConfig": {
-            "defaults": { "custom": { "scaleDistribution": { "type": "linear" } }, "unit": "s" },
-            "overrides": []
-          },
-          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 67 },
-          "id": 26,
-          "options": {
-            "calculate": false,
-            "color": { "mode": "scheme", "scheme": "Spectral", "steps": 64 },
-            "yAxis": { "unit": "s" }
-          },
-          "title": "Latency Heatmap — Native Histogram",
-          "type": "heatmap",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-              "expr": "sum(rate(rss2discord_feed_request_duration_seconds{namespace=~\"$namespace\", name=~\"$feedgroup\"}[$__rate_interval]))",
-              "legendFormat": "latency",
               "refId": "A"
             }
           ]
@@ -897,6 +907,6 @@
   "timezone": "",
   "title": "rss2discord-operator — FeedGroups",
   "uid": "rss2discord-feedgroups",
-  "version": 6,
+  "version": 8,
   "weekStart": ""
 }

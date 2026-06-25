@@ -124,6 +124,8 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	log := logf.FromContext(ctx).WithValues("feedgroup", req.NamespacedName)
 	ctx = logf.IntoContext(ctx, log)
 
+	reconcileStart := time.Now()
+
 	var feedGroup v1alpha1.FeedGroup
 	if err := r.Get(ctx, req.NamespacedName, &feedGroup); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -135,6 +137,13 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Error(err, "failed to get FeedGroup")
 		return ctrl.Result{}, err
 	}
+
+	// Timed from here, not from the top of Reconcile, so a deleted FeedGroup
+	// never re-creates its just-dropped feedGroupReconcileDuration series via
+	// a deferred Observe running after deleteFeedGroupMetrics above.
+	defer func() {
+		feedGroupReconcileDuration.WithLabelValues(req.Namespace, req.Name).Observe(time.Since(reconcileStart).Seconds())
+	}()
 
 	ensureFeedStatuses(&feedGroup)
 

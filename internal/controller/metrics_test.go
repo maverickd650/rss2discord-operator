@@ -257,13 +257,26 @@ func TestProcessFeed_NoOverflowMetricWhenContentFits(t *testing.T) {
 	}
 }
 
-// TestFeedRequestDuration_HybridHistogram guards the hybrid exposition
-// config on feedRequestDuration: classic buckets must stay present (so the
-// existing Grafana panels/heatmap keep working unchanged) while the native
-// histogram fields are also populated (so a Prometheus server that enables
-// native histograms benefits without any chart change).
-func TestFeedRequestDuration_HybridHistogram(t *testing.T) {
-	ns, name := "metrics-hybrid", "fg-hybrid"
+// assertNativeOnlyHistogram fails the test unless m has a native histogram
+// schema and no classic buckets, i.e. it isn't exposed twice (once as
+// classic, once as native) for the same observations.
+func assertNativeOnlyHistogram(t *testing.T, m *dto.Metric) {
+	t.Helper()
+	h := m.GetHistogram()
+	if len(h.GetBucket()) != 0 {
+		t.Fatalf("classic buckets present (%d), want none -- Buckets should be unset so this is native-only", len(h.GetBucket()))
+	}
+	if h.Schema == nil {
+		t.Fatal("native histogram schema missing, want NativeHistogramBucketFactor to enable it")
+	}
+}
+
+// TestFeedRequestDuration_NativeOnlyHistogram guards the native-only
+// exposition config on feedRequestDuration: no classic buckets (so it isn't
+// duplicated as a classic + native pair of dashboard panels) while the
+// native histogram schema is populated.
+func TestFeedRequestDuration_NativeOnlyHistogram(t *testing.T) {
+	ns, name := "metrics-native-only", "fg-native-only"
 	defer deleteFeedGroupMetrics(ns, name)
 
 	feedRequestDuration.WithLabelValues(ns, name, operationFetch).Observe(0.2)
@@ -276,14 +289,45 @@ func TestFeedRequestDuration_HybridHistogram(t *testing.T) {
 	if err := obs.(prometheus.Metric).Write(&m); err != nil {
 		t.Fatalf("write histogram metric: %v", err)
 	}
+	assertNativeOnlyHistogram(t, &m)
+}
 
-	h := m.GetHistogram()
-	if len(h.GetBucket()) == 0 {
-		t.Fatal("classic buckets missing, want them retained for existing dashboard/heatmap queries")
+// TestFeedGroupReconcileDuration_NativeOnlyHistogram mirrors
+// TestFeedRequestDuration_NativeOnlyHistogram for feedGroupReconcileDuration.
+func TestFeedGroupReconcileDuration_NativeOnlyHistogram(t *testing.T) {
+	ns, name := "metrics-reconcile-native-only", "fg-reconcile-native-only"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	feedGroupReconcileDuration.WithLabelValues(ns, name).Observe(0.2)
+
+	obs, err := feedGroupReconcileDuration.GetMetricWithLabelValues(ns, name)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
 	}
-	if h.Schema == nil {
-		t.Fatal("native histogram schema missing, want NativeHistogramBucketFactor to enable it")
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
 	}
+	assertNativeOnlyHistogram(t, &m)
+}
+
+// TestMessageOverflowChars_NativeOnlyHistogram mirrors
+// TestFeedRequestDuration_NativeOnlyHistogram for messageOverflowChars.
+func TestMessageOverflowChars_NativeOnlyHistogram(t *testing.T) {
+	ns, name := "metrics-overflow-native-only", "fg-overflow-native-only"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	messageOverflowChars.WithLabelValues(ns, name).Observe(42)
+
+	obs, err := messageOverflowChars.GetMetricWithLabelValues(ns, name)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
+	}
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
+	}
+	assertNativeOnlyHistogram(t, &m)
 }
 
 // TestDeleteFeedGroupMetrics confirms a deleted FeedGroup's series are
@@ -295,6 +339,7 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 	feedRequestDuration.WithLabelValues(ns, name, operationSend).Observe(0.1)
 	feedLastSuccessTimestamp.WithLabelValues(ns, name).Set(123)
 	messageOverflowChars.WithLabelValues(ns, name).Observe(42)
+	feedGroupReconcileDuration.WithLabelValues(ns, name).Observe(0.5)
 
 	deleteFeedGroupMetrics(ns, name)
 
@@ -312,5 +357,34 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 	if got := messageOverflowSampleCount(t, ns, name); got != 0 {
 		t.Fatalf("message overflow sample count after delete = %d, want 0", got)
 	}
+	if got := reconcileDurationSampleCount(t, ns, name); got != 0 {
+		t.Fatalf("reconcile duration sample count after delete = %d, want 0", got)
+	}
 	deleteFeedGroupMetrics(ns, name)
+}
+
+// reconcileDurationSampleCount reads the observation count of a single
+// feedGroupReconcileDuration series.
+func reconcileDurationSampleCount(t *testing.T, namespace, name string) uint64 {
+	t.Helper()
+	count, err := reconcileDurationSampleCountErr(namespace, name)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
+	}
+	return count
+}
+
+// reconcileDurationSampleCountErr is the error-returning core of
+// reconcileDurationSampleCount, usable from contexts (like Ginkgo specs)
+// that don't have a *testing.T to call Fatalf on.
+func reconcileDurationSampleCountErr(namespace, name string) (uint64, error) {
+	obs, err := feedGroupReconcileDuration.GetMetricWithLabelValues(namespace, name)
+	if err != nil {
+		return 0, err
+	}
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		return 0, err
+	}
+	return m.GetHistogram().GetSampleCount(), nil
 }

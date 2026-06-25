@@ -87,20 +87,18 @@ const (
 // feedRequestDuration records how long the operator's outbound HTTP calls
 // take, split by operation (the RSS fetch vs the Discord send), so the
 // dashboard can surface slow feeds/webhooks and an alert can catch a feed
-// host that has started hanging up to its timeout. Buckets span the client
-// timeouts (RSS fetch 15s, Discord send 10s); observed on both success and
-// failure, since the latency of a failing request is itself diagnostic.
+// host that has started hanging up to its timeout. Observed on both success
+// and failure, since the latency of a failing request is itself diagnostic.
 //
-// The classic Buckets are kept alongside the Native* fields so this exports
-// as a hybrid histogram: existing consumers (the Grafana panels and heatmap
-// querying ..._bucket/le) see no change, while a Prometheus server that
-// negotiates protobuf and has native histograms enabled also gets the
-// higher-resolution exponential representation for free.
+// Buckets is deliberately left unset: with NativeHistogramBucketFactor set
+// and no classic Buckets, client_golang exports this as a native-only
+// histogram (see prometheus.NewHistogram), so there's a single series per
+// label set instead of a classic/native pair the dashboard would otherwise
+// have to show twice.
 var feedRequestDuration = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:                            "rss2discord_feed_request_duration_seconds",
 		Help:                            "Duration of the operator's outbound HTTP requests, labeled by FeedGroup and operation (fetch/send).",
-		Buckets:                         []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15},
 		NativeHistogramBucketFactor:     1.1,
 		NativeHistogramMaxBucketNumber:  100,
 		NativeHistogramMinResetDuration: time.Hour,
@@ -126,19 +124,36 @@ var feedLastSuccessTimestamp = prometheus.NewGaugeVec(
 // rendered Discord message/embed-description/thread-name before it was
 // clamped to fit Discord's length limits (truncateMessage in
 // feedgroup_controller.go). Only actual overflows are observed -- the vast
-// majority of entries render under the limit -- so the histogram's _count
+// majority of entries render under the limit -- so histogram_count(rate(...))
 // directly answers "how often does this FeedGroup's content get cut off,"
 // rather than burying that signal in a sea of zero observations.
 //
-// Like feedRequestDuration, this is a hybrid histogram: the classic Buckets
-// keep existing ..._bucket/le consumers working, while the Native* fields
-// add the higher-resolution exponential representation for free on a
-// Prometheus server with native histograms enabled.
+// Like feedRequestDuration, Buckets is left unset so this exports as a
+// native-only histogram rather than a classic/native pair.
 var messageOverflowChars = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:                            "rss2discord_message_overflow_chars",
 		Help:                            "Characters trimmed from a rendered Discord message before it was clamped to fit Discord's length limits. Only recorded when content actually overflowed.",
-		Buckets:                         []float64{1, 10, 50, 100, 500, 1000, 5000},
+		NativeHistogramBucketFactor:     1.1,
+		NativeHistogramMaxBucketNumber:  100,
+		NativeHistogramMinResetDuration: time.Hour,
+	},
+	[]string{labelNamespace, labelName},
+)
+
+// feedGroupReconcileDuration records the wall-clock time of a full Reconcile
+// call (RSS fetch, send, and status write across every feed in the group),
+// so a FeedGroup whose reconciles are creeping toward the requeue interval
+// shows up before it starts missing its interval altogether.
+// controller-runtime's own controller_runtime_reconcile_time_seconds covers
+// this at the per-controller level but is classic-only and not labeled by
+// FeedGroup, so this is the value-add: a native-only series (Buckets left
+// unset, see feedRequestDuration) an operator can filter to one misbehaving
+// group.
+var feedGroupReconcileDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:                            "rss2discord_feedgroup_reconcile_duration_seconds",
+		Help:                            "Duration of a full FeedGroup reconcile, covering every feed's fetch and send.",
 		NativeHistogramBucketFactor:     1.1,
 		NativeHistogramMaxBucketNumber:  100,
 		NativeHistogramMinResetDuration: time.Hour,
@@ -157,8 +172,15 @@ func deleteFeedGroupMetrics(namespace, name string) {
 	feedRequestDuration.DeletePartialMatch(labels)
 	feedLastSuccessTimestamp.DeletePartialMatch(labels)
 	messageOverflowChars.DeletePartialMatch(labels)
+	feedGroupReconcileDuration.DeletePartialMatch(labels)
 }
 
 func init() {
-	metrics.Registry.MustRegister(feedOperationsTotal, feedRequestDuration, feedLastSuccessTimestamp, messageOverflowChars)
+	metrics.Registry.MustRegister(
+		feedOperationsTotal,
+		feedRequestDuration,
+		feedLastSuccessTimestamp,
+		messageOverflowChars,
+		feedGroupReconcileDuration,
+	)
 }
