@@ -81,6 +81,26 @@ func TestSendMessage_SuppressesMentionsByDefault(t *testing.T) {
 	}
 }
 
+func TestSendMessage_RedactsWebhookURLOnTransportError(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not receive a request once closed")
+	}))
+	webhookURL := srv.URL + "/api/webhooks/123456789/SUPER-SECRET-TOKEN"
+	srv.Close() // closing first forces a dial/connection-refused error below
+
+	AllowedWebhookHosts["127.0.0.1"] = true
+	defer delete(AllowedWebhookHosts, "127.0.0.1")
+
+	c := NewClientWithHTTP(webhookURL, srv.Client())
+	err := c.SendMessageText(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected a transport error, got nil")
+	}
+	if strings.Contains(err.Error(), "SUPER-SECRET-TOKEN") {
+		t.Fatalf("error leaked webhook token: %v", err)
+	}
+}
+
 func TestSendMessage_ClampsCombinedEmbedLength(t *testing.T) {
 	var receivedBody string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
