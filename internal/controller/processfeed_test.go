@@ -194,6 +194,50 @@ func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
 	}
 }
 
+// TestProcessFeed_RecoversFromStaleErrorWithNoNewEntries asserts a feed that
+// previously failed (LastError/RetryCount/BackoffUntil set) but now fetches
+// successfully with only already-sent/filtered entries -- so nothing is
+// pending -- has its error state cleared. Without this, a feed that recovers
+// but happens to have nothing new to deliver would show a stale error (and
+// keep the FeedGroup's Ready condition False) indefinitely, since neither
+// the 304 nor the empty-entries branch runs for a fetch that did return
+// entries, all of which were already handled.
+func TestProcessFeed_RecoversFromStaleErrorWithNoNewEntries(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "processfeed-recovers", "fg-recovers"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	fetchResult := oneEntryFetch()
+	entryKey := computeEntryKey(fetchResult.Entries[0])
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	fs.LastSent = map[string]string{entryKey: "2025-12-31T00:00:00Z"}
+	fs.LastError = "previous attempt: connection refused"
+	fs.RetryCount = 3
+	fs.BackoffUntil = "2025-12-31T01:00:00Z"
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
+		ctx, fg, feed, fetchResult, nil, client, "2026-01-01T00:00:00Z")
+
+	if wantRetry {
+		t.Fatal("expected no retry once the feed recovers")
+	}
+	got := feedStatusFor(fg, feed.RSSUrl)
+	if got.LastError != "" {
+		t.Fatalf("expected LastError to clear, got %q", got.LastError)
+	}
+	if got.RetryCount != 0 {
+		t.Fatalf("expected RetryCount to reset, got %d", got.RetryCount)
+	}
+	if got.BackoffUntil != "" {
+		t.Fatalf("expected BackoffUntil to clear, got %q", got.BackoffUntil)
+	}
+}
+
 // TestPermanentBackoffDuration verifies the exponential formula and cap.
 func TestPermanentBackoffDuration(t *testing.T) {
 	base := 5 * time.Minute
