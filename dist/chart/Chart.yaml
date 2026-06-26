@@ -2,8 +2,8 @@ apiVersion: v2
 name: rss2discord-operator
 description: A Helm chart to distribute rss2discord-operator
 type: application
-version: 0.7.0
-appVersion: 0.7.0
+version: 0.8.0
+appVersion: 0.8.0
 keywords:
   - kubernetes
   - operator
