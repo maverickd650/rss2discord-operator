@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.7.0...v0.8.0) (2026-06-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* a feed entry that permanently fails to send (e.g. Discord 400s on that entry's specific content) now blocks every later entry in the same feed until it's resolved or the FeedGroup spec changes, instead of being silently dropped while the rest of the feed kept flowing. This trades head-of-line blocking for no-silent-data-loss, which we consider the correct default for an at-least-once delivery system, but it is an observable behavior change worth a release note.
+
+### Bug Fixes
+
+* redact webhook secrets from errors, clear stale failure state on recovery ([#79](https://github.com/maverickd650/rss2discord-operator/issues/79)) ([5be7d6b](https://github.com/maverickd650/rss2discord-operator/commit/5be7d6bb1f3dcd0682dccfbc1f045e0e6e1dd6ba))
+* stop a failed feed entry from being silently dropped or stranded ([#77](https://github.com/maverickd650/rss2discord-operator/issues/77)) ([2fed502](https://github.com/maverickd650/rss2discord-operator/commit/2fed50298c358c9efa9401d1da2321122a7ff64a))
+
 ## [0.7.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.6.3...v0.7.0) (2026-06-25)
 
 
