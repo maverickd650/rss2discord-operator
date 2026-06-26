@@ -1,0 +1,47 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: feedgroup
+    attributes:
+      label: FeedGroup spec
+      description: The relevant `FeedGroup` manifest (redact webhook URLs/secrets).
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Status / logs
+      description: |
+        Output of `kubectl get feedgroup <name> -o yaml` (the `status:` block) and/or
+        relevant controller logs. Redact any webhook secrets.
+      render: yaml
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Operator version
+      description: Image tag / Helm chart version / commit SHA.
+    validations:
+      required: true
+
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes version
+      description: Output of `kubectl version`.
+    validations:
+      required: true
