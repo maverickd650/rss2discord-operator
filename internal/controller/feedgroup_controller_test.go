@@ -1449,6 +1449,81 @@ var _ = Describe("FeedGroup Controller", func() {
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
+		It("should fall back to the SSRF-guarded default RSS client when RSSClient is unset", func() {
+			// Leaving RSSClient unset on the reconciler exercises the
+			// fallback in Reconcile (rssClient := r.RSSClient; if nil {
+			// rssClient = rss.NewClient(nil) }), which builds the
+			// production SSRF-guarded client. That client refuses to dial a
+			// loopback address such as this mock server, so the feed should
+			// fail with the guard's error rather than actually fetching.
+			const feedGroupName = "test-feedgroup-default-rss-client"
+
+			By("Creating a mock RSS feed server bound to a loopback address")
+			rssServer := NewMockRSSServer(createRSSFeed(struct {
+				title       string
+				description string
+				link        string
+				pubDate     string
+				guid        string
+			}{
+				title:       "Unreachable",
+				description: "Should never be fetched",
+				link:        "https://example.com/unreachable",
+				pubDate:     time.Now().Format(time.RFC1123Z),
+				guid:        "unreachable",
+			}))
+			defer rssServer.Close()
+
+			By("Creating a secret with Discord webhook URL")
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "discord-webhook-default-rss-client",
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+			By("Creating FeedGroup resource")
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-default-rss-client"},
+						Key:                  secretURLKey,
+					},
+					Interval:      defaultInterval,
+					RetryInterval: "5m",
+					Retries:       3,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: rssServer.URL()},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			By("Running reconciliation without setting RSSClient")
+			reconciler := &FeedGroupReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the feed failed with the SSRF guard's error, not a real fetch")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(feedStatusFor(updated, rssServer.URL()).LastError).To(ContainSubstring("refusing to connect to non-public address"))
+		})
+
 		It("should retry then give up on a deterministically failing render, instead of retrying forever", func() {
 			const feedGroupName = "test-feedgroup-render-error"
 
