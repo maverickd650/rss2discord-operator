@@ -1,0 +1,60 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A Kubernetes operator (kubebuilder / controller-runtime, Go) that watches RSS/Atom feeds
+described by `FeedGroup` custom resources and posts new entries to Discord via incoming
+webhooks. Single API group, single kind: `FeedGroup` (`rss2discord.maverickd650.dev/v1alpha1`).
+
+`AGENTS.md` is the detailed companion guide — it covers kubebuilder/CLI scaffolding workflows,
+API/controller marker conventions, and the project's hardening rationale in depth. Read it
+when scaffolding new APIs/webhooks or touching the security-sensitive paths below.
+
+## Commands
+
+Tasks are defined in `.mise/config.toml` and run via `mise run <task>`. **This is the single
+source of truth — CI installs the pinned tool versions with `mise` and runs the same tasks, so
+local == CI.** Do not invoke `go test`/`golangci-lint` directly; use the tasks (they wire up
+codegen, envtest assets, and the custom lint binary).
+
+- `mise run test` — unit tests (runs `manifests`, `generate`, `fmt`, `vet` first; uses envtest = real K8s API server + etcd; `-race -coverprofile cover.out`). Excludes `/e2e`.
+- `mise run test-e2e` — e2e tests against a throwaway Kind cluster (created/deleted automatically; never run against a real cluster).
+- `mise run lint` / `lint-fix` — golangci-lint. Note: this project builds a **custom** golangci-lint binary (`.custom-gcl.yml` adds the `logcheck` module plugin), so the `lint` task depends on `golangci-lint-custom` which produces `bin/golangci-lint-custom`.
+- `mise run build` — build manager binary to `bin/manager`.
+- `mise run run` — run the controller locally against the current kubeconfig context.
+- `mise run manifests` — regenerate CRDs + RBAC from `+kubebuilder` markers.
+- `mise run generate` — regenerate `zz_generated.deepcopy.go`.
+
+Run a single test (after `mise run manifests generate` so codegen is current):
+```bash
+go test ./internal/controller/ -run TestName -v          # one Go test
+go test ./internal/controller/ -run TestX -args -ginkgo.focus="substring"   # focus a Ginkgo spec (suite_test.go uses Ginkgo+Gomega)
+```
+
+After editing `*_types.go` or markers, run `mise run manifests generate`. After editing any
+`*.go`, run `mise run lint-fix` and `mise run test`.
+
+## Architecture
+
+The reconcile loop is: for each `FeedGroup`, fetch every feed → filter → template/render →
+send to Discord → record per-feed delivery state in `FeedGroup.Status`. Three internal packages:
+
+- `internal/rss` (`client.go`) — fetches and parses feeds. Conditional GET via ETag/Last-Modified, response-size cap.
+- `internal/discord` (`client.go`) — builds and sends webhook messages; rate-limit/error handling, content sanitization, length clamping, `@everyone`/`@here` suppression, `javascript:`/`data:` URI stripping.
+- `internal/controller` — `FeedGroupReconciler` (`feedgroup_controller.go`) orchestrates everything, plus `metrics.go` (Prometheus) and `classify.go` (error → outcome classification).
+
+Cross-cutting designs that span multiple files (change these carefully):
+
+- **SSRF guards — do not weaken or duplicate.** RSS URLs and the webhook secret are user-supplied. `internal/rss/client.go`'s `newDefaultHTTPClient` uses a custom `DialContext` that resolves the host and rejects any non-public IP (loopback, link-local, private, unspecified, multicast, CGNAT) via `isPublicIP`. `internal/discord/client.go` only sends to HTTPS hosts in `AllowedWebhookHosts` (Discord domains). Tests that need to hit local `httptest` servers use the unguarded helpers in `internal/controller/*_test.go` (`testRSSClient()`, registering into `discord.AllowedWebhookHosts`) — never relax the production guards for tests. (A `security-reviewer` subagent guards these two files.)
+
+- **Per-feed status is a slice, not maps.** `FeedGroup.Status.Feeds []FeedStatus` (keyed by `rssUrl`); each struct holds `LastChecked`/`LastSeenEntry`/`LastSent`/`LastError`/`ETag`/`LastModified`/`RetryCount`/`Conditions` together. `ensureFeedStatuses` rebuilds the slice every reconcile (in `Spec.Feeds` order), initializing new feeds and pruning removed ones in one pass; `feedStatusFor` looks one up by URL. New per-feed state goes on `FeedStatus`, not a new parallel map.
+
+- **Metrics use a single outcome label.** Every fetch/send attempt increments `feedOperationsTotal` with exactly one `outcome` (`outcomeSent`, `outcomeFetchError`, `outcomeSendError`, `outcomeRenderError`, `outcomeRateLimited`). `fetch_error`/`send_error` are sub-classified by cause in `classify.go` (e.g. `fetch_error_not_found`) — `outcomeFetchError`/`outcomeSendError` are only ever label *prefixes*, never recorded raw. The Grafana dashboard (`dist/chart/dashboards/feedgroup-overview.json`) and PrometheusRule alerts match these with anchored regexes, so a new outcome usually needs a dashboard panel/alert too.
+
+- **Failure classification → status conditions.** `classify.go` maps an error to a `failureClass`: a Prometheus-safe `metricReason`, a CamelCase `conditionReason` (e.g. `HTTP404`), and a `permanent` flag. `conditionReason` becomes the `Reason` on a feed's `Reachable` (fetch) or `Delivered` (render/send) condition; the group-level `FeedReachable` condition summarizes the most common failure — so `kubectl get feedgroup -o yaml` explains *why* a feed is down. Persistent-failure Events fire exactly once when `RetryCount` first reaches the retry limit (`==`, not `>=`), so an ongoing failure doesn't re-fire every reconcile.
+
+## Do not edit (auto-generated)
+
+`config/crd/bases/*.yaml`, `config/rbac/role.yaml`, `**/zz_generated.*.go` (from `mise run manifests`/`generate`), and `PROJECT` (kubebuilder). Never delete `// +kubebuilder:scaffold:*` markers. Use `kubebuilder create api`/`create webhook` to scaffold — don't hand-create those files. Edit `config/samples/*` (example CRs) freely.
