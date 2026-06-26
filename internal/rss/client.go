@@ -407,15 +407,32 @@ func unmarshalXML(data []byte, v any) error {
 	return decoder.Decode(v)
 }
 
-func parseFeed(data []byte) ([]Entry, error) {
-	var envelope struct {
-		XMLName xml.Name
+// rootElementName returns the local name of data's outermost XML element
+// ("rss" or "feed", typically), reading only as far as that first start tag
+// rather than decoding the whole document. parseFeed uses this to pick
+// parseRSS vs. parseAtom without paying for a full Unmarshal twice -- once
+// here and again in whichever of those it then calls.
+func rootElementName(data []byte) (string, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.CharsetReader = charset.NewReaderLabel
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return "", err
+		}
+		if start, ok := tok.(xml.StartElement); ok {
+			return start.Name.Local, nil
+		}
 	}
-	if err := unmarshalXML(data, &envelope); err != nil {
+}
+
+func parseFeed(data []byte) ([]Entry, error) {
+	root, err := rootElementName(data)
+	if err != nil {
 		return nil, err
 	}
 
-	switch strings.ToLower(envelope.XMLName.Local) {
+	switch strings.ToLower(root) {
 	case "rss":
 		return parseRSS(data)
 	case "feed":
