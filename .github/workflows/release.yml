@@ -94,6 +94,21 @@ jobs:
         run: |
           cosign sign --yes "${IMAGE}@${DIGEST}"
 
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest image SBOM (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+
       - name: Log in to GHCR for Helm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
