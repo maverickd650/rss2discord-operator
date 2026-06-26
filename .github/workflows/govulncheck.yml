@@ -1,0 +1,31 @@
+name: Govulncheck
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  pull_request:
+    paths-ignore: ["**.md"]
+  schedule:
+    # Weekly scan to catch advisories published against dependencies that
+    # haven't otherwise changed (govulncheck's vulnerability DB updates
+    # independently of this repo's commits).
+    - cron: "13 4 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  govulncheck:
+    name: Govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
+        with:
+          go-version-file: go.mod

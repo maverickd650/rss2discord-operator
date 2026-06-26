@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -211,7 +212,16 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		// http.Client.Do wraps transport failures in a *url.Error whose
+		// Error() includes the full request URL -- which contains the
+		// webhook token. That string ends up in FeedGroup.Status,
+		// Conditions, and Kubernetes Events, all readable with much
+		// weaker RBAC than the Secret itself, so strip the URL before
+		// it leaves this function.
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
+			return fmt.Errorf("discord webhook request failed: %w", urlErr.Err)
+		}
+		return fmt.Errorf("discord webhook request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

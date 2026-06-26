@@ -465,6 +465,16 @@ func (r *FeedGroupReconciler) processFeed(
 	// at this entry) on every reconcile until it's actually resolved.
 	if !pending {
 		persistValidators()
+		// Every entry from this fetch was either sent (which already clears
+		// these below in sendNewEntries) or skipped as already-sent/filtered.
+		// A feed stuck on a prior failure that recovers but happens to have
+		// nothing new and unfiltered to send would otherwise keep showing the
+		// stale LastError/RetryCount forever, since neither branch above runs
+		// for an all-skipped fetch -- the FeedGroup's Ready condition would
+		// stay False on a feed that's actually healthy again.
+		fs.LastError = ""
+		fs.RetryCount = 0
+		fs.BackoffUntil = ""
 	}
 
 	return wantRetry, rateLimitRetryAfter
