@@ -36,11 +36,14 @@ import (
 // namespace where the project is deployed in
 const namespace = "rss2discord-operator-system"
 
-// serviceAccountName created for the project
-const serviceAccountName = "rss2discord-operator-controller-manager"
+// serviceAccountName created for the project. The Helm chart's fullname
+// template collapses to the release name alone when the release name already
+// contains the chart name (see dist/chart/templates/_helpers.tpl), so this is
+// shorter than the "-controller-manager" suffix kustomize would produce.
+const serviceAccountName = "rss2discord-operator"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "rss2discord-operator-controller-manager-metrics-service"
+const metricsServiceName = "rss2discord-operator-metrics"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "rss2discord-operator-metrics-binding"
@@ -49,8 +52,9 @@ var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
 	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
+	// enforcing the restricted security policy on it, and deploying the controller
+	// via the Helm chart (the supported install path; the chart installs CRDs and
+	// RBAC as part of the same release, so there's no separate install step).
 	BeforeAll(func() {
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
@@ -63,31 +67,22 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("mise", "run", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
+		By("deploying the controller-manager via Helm")
 		// IMG is set in the suite's BeforeSuite and read from the environment by the mise task.
-		cmd = exec.Command("mise", "run", "deploy")
+		cmd = exec.Command("mise", "run", "helm-deploy")
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager via Helm")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
+	// After all tests have been executed, clean up by uninstalling the Helm release
 	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
-		By("undeploying the controller-manager")
-		cmd = exec.Command("mise", "run", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("mise", "run", "uninstall")
+		By("uninstalling the controller-manager Helm release")
+		cmd = exec.Command("mise", "run", "helm-uninstall")
 		_, _ = utils.Run(cmd)
 
 		By("removing manager namespace")
@@ -160,7 +155,7 @@ var _ = Describe("Manager", Ordered, func() {
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+				g.Expect(controllerPodName).To(ContainSubstring("rss2discord-operator"))
 
 				By("validating the pod's status")
 				cmd = exec.Command("kubectl", "get",
@@ -271,15 +266,15 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		// Deliberately not exercising FeedGroup reconciliation (RSS fetch -> Discord
+		// send) here. internal/discord/client.go only sends to real Discord hostnames
+		// (AllowedWebhookHosts), so there's no way to point a real in-cluster manager
+		// at a mock webhook receiver without weakening that SSRF guard — and the
+		// envtest-based suite (internal/controller/feedgroup_controller_test.go)
+		// already covers the full reconcile loop against mock RSS/Discord servers in
+		// depth by registering the mock's loopback address into AllowedWebhookHosts
+		// for the test process. This suite's job is the part envtest can't cover:
+		// does the chart deploy cleanly on real Kubernetes with the expected RBAC.
 	})
 })
 

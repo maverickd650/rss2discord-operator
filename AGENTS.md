@@ -324,8 +324,8 @@ this project has no Makefile (mise tasks are the source of truth instead), so th
 shims one in for the duration of the run.
 
 Without `--force`, the plugin already leaves `Chart.yaml`, `values.yaml`, `_helpers.tpl`,
-`NOTES.txt`, `.helmignore`, `.github/workflows/test-chart.yml`, and `templates/network-policy/*`
-untouched on every run (confirmed empirically, not just from `--help` text) — that's where this
+`NOTES.txt`, `.helmignore`, and `templates/network-policy/*` untouched on every run (confirmed
+empirically, not just from `--help` text) — that's where this
 chart's hand-tuned `values.yaml` sections (`prometheus.scrapeNativeHistograms`,
 `prometheusRule.*`, `grafanaDashboard.*`) and the `controllerManagerName` helper in
 `_helpers.tpl` live. The plugin also never touches files it doesn't recognize at all —

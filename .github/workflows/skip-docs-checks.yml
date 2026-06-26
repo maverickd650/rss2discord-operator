@@ -1,10 +1,10 @@
 name: Skip docs-only checks
 
-# Lint/Test/Test Chart/E2E Tests are required status checks, but they skip
-# entirely on docs-only changes via paths-ignore so CI doesn't run for every
-# typo fix. A required check that never runs stays "expected" forever and
-# blocks merge, so this workflow runs only on **.md changes and reports the
-# same job names as an immediate success, satisfying branch protection.
+# Lint/Test/E2E Tests are required status checks, but they skip entirely on
+# docs-only changes via paths-ignore so CI doesn't run for every typo fix. A
+# required check that never runs stays "expected" forever and blocks merge,
+# so this workflow runs only on **.md changes and reports the same job names
+# as an immediate success, satisfying branch protection.
 on:
   push:
     branches: [main]
@@ -27,12 +27,6 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Skipping — docs-only change"
-
-  test-chart:
-    name: Test Chart
     runs-on: ubuntu-latest
     steps:
       - run: echo "Skipping — docs-only change"
