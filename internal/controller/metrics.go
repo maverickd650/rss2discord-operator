@@ -28,6 +28,7 @@ import (
 const (
 	labelNamespace = "namespace"
 	labelName      = "name"
+	labelFeedURL   = "rss_url"
 	labelOutcome   = "outcome"
 	labelOperation = "operation"
 )
@@ -68,13 +69,17 @@ func sendErrorOutcome(class failureClass) string {
 // feedOperationsTotal counts feed fetch/send outcomes per FeedGroup, so
 // `kubectl describe feedgroup` paired with this metric (or an alert on
 // fetch_error/send_error rate) replaces having to grep controller logs to
-// find out why a FeedGroup stopped posting.
+// find out why a FeedGroup stopped posting. labelFeedURL identifies which
+// feed within the group an outcome belongs to -- a FeedGroup can have up to
+// 50 feeds (FeedGroupSpec.Feeds), so namespace/name alone can't tell an
+// operator which one is failing without a status dive; PrometheusRule alerts
+// surface it directly via $labels.rss_url.
 var feedOperationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "rss2discord_feed_operations_total",
-		Help: "Total number of RSS feed fetch/send operations processed, labeled by FeedGroup and outcome.",
+		Help: "Total number of RSS feed fetch/send operations processed, labeled by FeedGroup, feed URL, and outcome.",
 	},
-	[]string{labelNamespace, labelName, labelOutcome},
+	[]string{labelNamespace, labelName, labelFeedURL, labelOutcome},
 )
 
 // operation labels for feedRequestDuration, distinguishing the two outbound

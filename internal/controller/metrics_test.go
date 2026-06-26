@@ -129,7 +129,7 @@ func TestProcessFeed_RecordsOutcomeMetric(t *testing.T) {
 			}
 			(&FeedGroupReconciler{}).processFeed(ctx, fg, feed, fetchResult, tc.fetchErr, client, "2026-01-01T00:00:00Z")
 
-			if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, tc.outcome)); got != 1 {
+			if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, exampleFeedURL, tc.outcome)); got != 1 {
 				t.Fatalf("feedOperationsTotal{outcome=%q} = %v, want 1", tc.outcome, got)
 			}
 		})
@@ -366,7 +366,7 @@ func TestMessageOverflowChars_NativeOnlyHistogram(t *testing.T) {
 func TestDeleteFeedGroupMetrics(t *testing.T) {
 	ns, name := "metrics-delete", "fg-delete"
 
-	feedOperationsTotal.WithLabelValues(ns, name, outcomeSent).Inc()
+	feedOperationsTotal.WithLabelValues(ns, name, exampleFeedURL, outcomeSent).Inc()
 	feedRequestDuration.WithLabelValues(ns, name, operationSend).Observe(0.1)
 	feedLastSuccessTimestamp.WithLabelValues(ns, name).Set(123)
 	messageOverflowChars.WithLabelValues(ns, name).Observe(42)
@@ -376,7 +376,7 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 
 	// After deletion, re-fetching a series via WithLabelValues recreates it at
 	// zero; a non-zero read would mean the original series was never removed.
-	if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, outcomeSent)); got != 0 {
+	if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, exampleFeedURL, outcomeSent)); got != 0 {
 		t.Fatalf("feedOperationsTotal after delete = %v, want 0", got)
 	}
 	if got := testutil.ToFloat64(feedLastSuccessTimestamp.WithLabelValues(ns, name)); got != 0 {

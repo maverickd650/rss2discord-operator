@@ -255,7 +255,7 @@ The controller exports these Prometheus metrics, all labeled by `namespace` and 
 
 | Metric | Type | Extra labels | What it tells you |
 |--------|------|--------------|-------------------|
-| `rss2discord_feed_operations_total` | counter | `outcome` (`sent`, `fetch_error`, `send_error`, `render_error`, `rate_limited`) | Send-success ratios and a per-FeedGroup error breakdown |
+| `rss2discord_feed_operations_total` | counter | `rss_url`, `outcome` (`sent`, `fetch_error`, `send_error`, `render_error`, `rate_limited`) | Send-success ratios and a per-feed error breakdown (which feed in the group, and why) |
 | `rss2discord_feed_request_duration_seconds` | histogram | `operation` (`fetch`, `send`) | Latency of the operator's outbound RSS fetches and Discord sends (e.g. a feed host hanging up to its timeout) |
 | `rss2discord_feedgroup_reconcile_duration_seconds` | histogram | — | Wall-clock time of a full reconcile (every feed's fetch and send), so a FeedGroup creeping toward its requeue interval shows up before it starts missing it |
 | `rss2discord_message_overflow_chars` | histogram | — | Characters trimmed from a rendered Discord message before it was clamped to fit Discord's length limits; only recorded on actual overflow, so `histogram_count(rate(rss2discord_message_overflow_chars[5m]))` answers "how often does this FeedGroup's content get cut off" |
@@ -278,7 +278,7 @@ The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`
 |-------|---------|--------------|
 | `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
 | `prometheus.scrapeNativeHistograms` | `true` | With `prometheus.enabled`, has the `ServiceMonitor` negotiate protobuf so Prometheus actually gets resolution out of the operator's native-only histograms (`feed_request_duration_seconds`, `feedgroup_reconcile_duration_seconds`, `message_overflow_chars`); without it these three metrics expose `_count`/`_sum` only |
-| `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per FeedGroup. Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
+| `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per feed (annotations name the failing feed URL and, for fetch/send errors, the failure reason). Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
 | `grafanaDashboard.enabled` | `false` | Ships a ConfigMap holding the dashboard JSON plus a `GrafanaDashboard` custom resource for the [grafana-operator](https://github.com/grafana/grafana-operator) (referencing it via `configMapRef`), with rows for executive summary (success rate, failing/stale feed counts), service health, action-required triage (failing FeedGroups, top erroring feeds), feed freshness, performance (fetch/send latency p50/p95/p99 + heatmap, reconcile duration, message overflow size -- all native histogram panels), and operator (controller-runtime/workqueue) health. Target a specific Grafana instance with `grafanaDashboard.instanceSelector`; the dashboard's `${DS_PROMETHEUS}` placeholder is resolved to a real datasource via `grafanaDashboard.datasources` |
 
 ```bash

@@ -304,7 +304,7 @@ func (r *FeedGroupReconciler) processFeed(
 		class := classifyFetchError(fetchErr)
 		fs.LastError = fetchErr.Error()
 		fs.RetryCount++
-		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, fetchErrorOutcome(class)).Inc()
+		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, fetchErrorOutcome(class)).Inc()
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionFalse,
 			class.conditionReason, fetchErr.Error(), feedGroup.Generation)
 
@@ -522,7 +522,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
 			fs.LastError = err.Error()
 			fs.RetryCount++
-			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRenderError).Inc()
+			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeRenderError).Inc()
 			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
 				reasonRenderError, err.Error(), feedGroup.Generation)
 
@@ -569,7 +569,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			var rateLimitErr *discord.RateLimitError
 			if errors.As(err, &rateLimitErr) {
 				wantRetry = true
-				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeRateLimited).Inc()
+				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeRateLimited).Inc()
 				setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
 					reasonRateLimited, err.Error(), feedGroup.Generation)
 				if rateLimitErr.RetryAfter > rateLimitRetryAfter {
@@ -585,7 +585,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			} else {
 				class := classifySendError(err)
 				fs.RetryCount++
-				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, sendErrorOutcome(class)).Inc()
+				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, sendErrorOutcome(class)).Inc()
 				setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
 					class.conditionReason, err.Error(), feedGroup.Generation)
 
@@ -627,7 +627,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		fs.BackoffUntil = ""
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionTrue,
 			"MessageSent", "Entry rendered and delivered to Discord", feedGroup.Generation)
-		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
+		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeSent).Inc()
 	}
 
 	return wantRetry, rateLimitRetryAfter, pending
