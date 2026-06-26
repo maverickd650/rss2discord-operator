@@ -1,0 +1,24 @@
+name: Setup Go environment
+description: >
+  Installs the mise-pinned toolchain and restores the Go build/module cache.
+  Shared by workflows that need a Go toolchain so there's one place to bump
+  mise-action/cache versions. Run actions/checkout before this step — a local
+  composite action can't check out the repo itself, since the runner needs
+  the repo on disk to find this action.yml in the first place.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Mise
+      uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      with:
+        install_args: --locked
+
+    - name: Cache Go modules and build
+      uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+        restore-keys: ${{ runner.os }}-go-

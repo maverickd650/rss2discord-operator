@@ -25,19 +25,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Mise
-        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          install_args: --locked
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
 
-      - name: Cache Go modules and build
+      - name: Cache custom golangci-lint binary
+        id: golangci-lint-custom-cache
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
-          restore-keys: ${{ runner.os }}-go-
+          path: bin/golangci-lint-custom
+          key: ${{ runner.os }}-golangci-lint-custom-${{ hashFiles('.custom-gcl.yml') }}
+
+      - name: Mark restored binary fresh
+        # mise's `golangci-lint-custom` task skips rebuilding when its output is newer
+        # than .custom-gcl.yml; checkout always gives that file a fresh mtime, so without
+        # this the cache hit would still trigger a rebuild every run.
+        if: steps.golangci-lint-custom-cache.outputs.cache-hit == 'true'
+        run: touch bin/golangci-lint-custom
 
       - name: Check linter configuration
         run: mise run lint-config
