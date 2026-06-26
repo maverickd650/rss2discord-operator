@@ -52,6 +52,7 @@ func TestClassifyFetchError(t *testing.T) {
 		{reasonRateLimited, &rss.HTTPStatusError{StatusCode: 429, Status: "429 Too Many Requests"}, classRateLimited},
 		{reasonServerError, &rss.HTTPStatusError{StatusCode: 503, Status: "503 Service Unavailable"}, classServerError},
 		{reasonClientError, &rss.HTTPStatusError{StatusCode: 401, Status: "401 Unauthorized"}, classClientError},
+		{"OtherStatusCode", &rss.HTTPStatusError{StatusCode: 100, Status: "100 Continue"}, classOther},
 		{reasonTimeout, fmt.Errorf("fetch: %w", timeoutError{}), classTimeout},
 		{reasonDNSFailure, fmt.Errorf("fetch: %w", &net.DNSError{Err: "no such host", Name: "example.invalid"}), classDNSFailure},
 		{reasonParseError, fmt.Errorf("parse: %w", &xml.SyntaxError{Msg: "unexpected EOF"}), classParseError},

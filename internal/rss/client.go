@@ -438,11 +438,9 @@ func parseFeed(data []byte) ([]Entry, error) {
 	case "feed":
 		return parseAtom(data)
 	default:
-		// Attempt RSS first, then Atom.
-		entries, err := parseRSS(data)
-		if err == nil {
-			return entries, nil
-		}
+		// rssEnvelope's XMLName is pinned to "rss", so parseRSS always fails
+		// on a root name that reached this branch; fall straight to Atom,
+		// which has no such root-name constraint.
 		return parseAtom(data)
 	}
 }

@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	v1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
@@ -163,6 +166,38 @@ func TestParseDurationWithDefault(t *testing.T) {
 			t.Fatalf("expected fallback on error, got %v", got)
 		}
 	})
+
+	t.Run("overflowing duration returns fallback and error", func(t *testing.T) {
+		// The CRD's Pattern validation on Interval/RetryInterval
+		// (feedgroup_types.go) accepts unbounded digit runs, so a value like
+		// this passes admission but still overflows time.ParseDuration.
+		got, err := parseDurationWithDefault("99999999999999999999h", fallback)
+		if err == nil {
+			t.Fatal("expected error for an overflowing duration, got nil")
+		}
+		if got != fallback {
+			t.Fatalf("expected fallback on error, got %v", got)
+		}
+	})
+}
+
+// TestRequeueWithStatus_InvalidIntervalReturnsError asserts requeueWithStatus
+// surfaces a duration-parse failure as an error rather than silently
+// requeuing, since interval/RetryInterval can pass the CRD's Pattern
+// validation yet still fail time.ParseDuration (see the overflow case in
+// TestParseDurationWithDefault above).
+func TestRequeueWithStatus_InvalidIntervalReturnsError(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	original := feedGroup.Status.DeepCopy()
+
+	r := &FeedGroupReconciler{}
+	result, err := r.requeueWithStatus(context.Background(), feedGroup, original, "99999999999999999999h", time.Minute, nil)
+	if err == nil {
+		t.Fatal("expected error for an invalid interval, got nil")
+	}
+	if result != (ctrl.Result{}) {
+		t.Fatalf("expected zero-value Result on error, got %+v", result)
+	}
 }
 
 func TestMaxRetryCount(t *testing.T) {
@@ -578,5 +613,34 @@ func TestBuildDiscordMessage_ForumThreadNameRenderError(t *testing.T) {
 
 	if _, err := buildDiscordMessage(feedGroup, nil, contentTmpl, nil, threadNameTmpl, feed, rss.Entry{}); err == nil {
 		t.Fatal("expected an error from a forum thread name template that fails at execution")
+	}
+}
+
+// TestBuildDiscordMessage_ForumThreadIDTakesPrecedenceOverThreadName asserts
+// an explicit ForumThreadID (posting into an existing thread) wins over a
+// configured ForumThreadName template (which creates a new thread), even
+// when both are set.
+func TestBuildDiscordMessage_ForumThreadIDTakesPrecedenceOverThreadName(t *testing.T) {
+	feedGroup := &v1alpha1.FeedGroup{}
+	feed := &v1alpha1.FeedSpec{ForumThreadID: "123456", ForumThreadName: "{{.Title}}"}
+
+	contentTmpl, err := compileTemplate("content", "{{.Title}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	threadNameTmpl, err := compileTemplate("threadName", "{{.Title}}", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg, err := buildDiscordMessage(feedGroup, nil, contentTmpl, nil, threadNameTmpl, feed, rss.Entry{Title: "Hello"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.ThreadID != "123456" {
+		t.Fatalf("msg.ThreadID = %q, want %q", msg.ThreadID, "123456")
+	}
+	if msg.ThreadName != "" {
+		t.Fatalf("expected ThreadName to stay empty when ForumThreadID is set, got %q", msg.ThreadName)
 	}
 }

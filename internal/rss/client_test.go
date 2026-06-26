@@ -2,6 +2,7 @@ package rss
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -345,5 +346,60 @@ func TestIsPublicIP(t *testing.T) {
 		if got := isPublicIP(ip); got != tc.public {
 			t.Errorf("isPublicIP(%s) = %v, want %v", tc.ip, got, tc.public)
 		}
+	}
+}
+
+func TestHTTPStatusError_ErrorWithoutBody(t *testing.T) {
+	err := &HTTPStatusError{StatusCode: 503, Status: "503 Service Unavailable"}
+	if got, want := err.Error(), "feed fetch failed: 503 Service Unavailable"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultClient_RejectsUnresolvableHost(t *testing.T) {
+	// "invalid" is reserved by RFC 6761 to never resolve, so this reliably
+	// exercises the DialContext's LookupIP error path (rather than the
+	// isPublicIP rejection exercised by TestDefaultClient_RejectsLoopbackTarget).
+	c := NewClient(nil)
+	_, err := c.FetchEntries(context.Background(), "http://does-not-resolve.invalid/feed.xml", CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error resolving an unresolvable host, got nil")
+	}
+}
+
+type errorReadCloser struct{}
+
+func (errorReadCloser) Read([]byte) (int, error) { return 0, errors.New("simulated body read failure") }
+func (errorReadCloser) Close() error             { return nil }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestFetchEntries_ReturnsErrorOnBodyReadFailure(t *testing.T) {
+	rt := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       errorReadCloser{},
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	c := NewClient(&http.Client{Transport: rt})
+	_, err := c.FetchEntries(context.Background(), "http://example.com/feed.xml", CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error reading response body, got nil")
+	}
+}
+
+func TestParseFeed_DefaultBranchFallsBackToAtomAndFails(t *testing.T) {
+	// The root element "RDF" is neither "rss" nor "feed", so parseFeed takes
+	// the default branch; the document is otherwise malformed, so both the
+	// RSS and the Atom decode attempts fail.
+	data := []byte(`<rdf:RDF><channel><unclosed`)
+
+	_, err := parseFeed(data)
+	if err == nil {
+		t.Fatal("expected error for malformed non-rss/feed document, got nil")
 	}
 }
