@@ -102,8 +102,7 @@ var (
 // is down for a known, specific reason from one that's failing in some novel
 // way that deserves attention.
 func classifyFetchError(err error) failureClass {
-	var statusErr *rss.HTTPStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*rss.HTTPStatusError](err); ok {
 		return classifyHTTPStatus(statusErr.StatusCode)
 	}
 
@@ -111,8 +110,7 @@ func classifyFetchError(err error) failureClass {
 		return class
 	}
 
-	var syntaxErr *xml.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if _, ok := errors.AsType[*xml.SyntaxError](err); ok {
 		return classParseError
 	}
 
@@ -124,13 +122,11 @@ func classifyFetchError(err error) failureClass {
 // already carries its own Retry-After-driven backoff), so this only needs to
 // cover the remaining send failures.
 func classifySendError(err error) failureClass {
-	var rateLimitErr *discord.RateLimitError
-	if errors.As(err, &rateLimitErr) {
+	if _, ok := errors.AsType[*discord.RateLimitError](err); ok {
 		return classRateLimited
 	}
 
-	var statusErr *discord.HTTPStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*discord.HTTPStatusError](err); ok {
 		if statusErr.StatusCode == 404 {
 			// A deleted/regenerated webhook returns 404 from Discord's API,
 			// distinct from a feed 404: it means the *destination*, not the
@@ -170,13 +166,11 @@ func classifyHTTPStatus(statusCode int) failureClass {
 // timeout) that both rss.Client and discord.Client surface as plain *url.Error
 // / *net.DNSError / net.Error rather than a typed status error.
 func classifyNetworkError(err error) (failureClass, bool) {
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return classDNSFailure, true
 	}
 
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
 		return classTimeout, true
 	}
 

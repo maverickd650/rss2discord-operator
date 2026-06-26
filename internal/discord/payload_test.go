@@ -124,8 +124,8 @@ func TestSendMessage_ReturnsRateLimitError(t *testing.T) {
 	c := NewClientWithHTTP(srv.URL, srv.Client())
 	err := c.SendMessageText(context.Background(), "rate limited test")
 
-	var rle *RateLimitError
-	if !errors.As(err, &rle) {
+	rle, ok := errors.AsType[*RateLimitError](err)
+	if !ok {
 		t.Fatalf("expected *RateLimitError, got %v", err)
 	}
 	if rle.RetryAfter != 2*time.Second {
