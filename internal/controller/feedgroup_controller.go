@@ -52,6 +52,15 @@ import (
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
 )
 
+// defaultMessageFormat, like any feed/group Format, interpolates entry
+// fields via text/template with no markdown escaping (stripHTML removes
+// HTML tags, not Discord markdown syntax). A malicious feed publisher --
+// not the operator who configured the feed URL -- could break out of
+// `[text](url)` or inject formatting/links into the rendered message.
+// allowed_mentions.parse=[] (see internal/discord) already blocks the
+// high-severity case (@everyone/@here/role/user pings), so this is an
+// accepted residual risk: link-spoofing/formatting injection, not
+// channel-wide pings.
 const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
 
 // maxPermanentBackoff is the ceiling for per-feed exponential backoff on
@@ -307,18 +316,7 @@ func (r *FeedGroupReconciler) processFeed(
 			// BackoffUntil checked in the active-feeds filter. wantRetry is
 			// false so a single permanent failure doesn't pull the whole group
 			// onto the faster RetryInterval.
-			base, _ := parseDurationWithDefault(feedGroup.Spec.RetryInterval, 5*time.Minute)
-			backoff := permanentBackoffDuration(fs.RetryCount, base)
-			if backoff >= maxPermanentBackoff {
-				// Cap reached: stop fetching until a spec change resets backoff.
-				// The Warning Event fires exactly once here (the first time the
-				// cap is hit); subsequent reconciles skip this feed entirely at
-				// the active-feeds filter, so this branch is never re-entered.
-				fs.BackoffUntil = permanentBackoffSentinel
-				r.recordPersistentFailure(feedGroup, feed.RSSUrl, "FetchFailed", fetchErr)
-			} else {
-				fs.BackoffUntil = time.Now().UTC().Add(backoff).Format(time.RFC3339)
-			}
+			r.applyPermanentBackoff(feedGroup, fs, feed.RSSUrl, "FetchFailed", fetchErr)
 			return false, 0
 		}
 
@@ -450,16 +448,22 @@ func (r *FeedGroupReconciler) processFeed(
 		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
 	}
 
-	wantRetry, rateLimitRetryAfter = r.sendNewEntries(ctx, feedGroup, fs, feed, entries, hasSeenID, lastSeenID,
+	var pending bool
+	wantRetry, rateLimitRetryAfter, pending = r.sendNewEntries(ctx, feedGroup, fs, feed, entries, hasSeenID, lastSeenID,
 		filterRegex, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, discordClient, now)
 
 	pruneLastSent(fs.LastSent, maxLastSentPerFeed)
 
 	// Only persist now that every entry from this fetch was either sent or
-	// filtered out; if anything is still pending retry, keep the old
-	// validators so the next fetch returns the full body again instead of a
-	// 304 that would skip the unsent entry for good.
-	if !wantRetry && rateLimitRetryAfter == 0 {
+	// filtered out. pending (not wantRetry) is the right gate here: wantRetry
+	// turns false once an entry's retries are exhausted or it enters
+	// permanent backoff, even though the entry itself is still unsent.
+	// Persisting validators at that point would let the next fetch's
+	// conditional GET come back 304 -- which skips re-parsing entries
+	// entirely -- and silently strand the unresolved entry forever. Keeping
+	// the old validators instead forces a full re-fetch (and another attempt
+	// at this entry) on every reconcile until it's actually resolved.
+	if !pending {
 		persistValidators()
 	}
 
@@ -482,7 +486,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 	contentTmpl, descriptionTmpl, threadNameTmpl *template.Template,
 	discordClient *discord.Client,
 	now string,
-) (wantRetry bool, rateLimitRetryAfter time.Duration) {
+) (wantRetry bool, rateLimitRetryAfter time.Duration, pending bool) {
 	log := logf.FromContext(ctx)
 	foundLastSeen := !hasSeenID
 
@@ -514,8 +518,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 
 			// A render error is deterministic for a given entry+template, so
 			// once retries are exhausted, retrying forever would just spin
-			// at RetryInterval without ever making progress. Treat it like a
-			// send-side persistent failure: stop retrying and surface an
+			// at RetryInterval without ever making progress. Surface an
 			// Event instead of looping indefinitely. The Event only fires
 			// the reconcile RetryCount first reaches maxRetries (== rather
 			// than >=), since this entry is reprocessed every reconcile
@@ -528,7 +531,21 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			} else if fs.RetryCount == maxRetries {
 				r.recordPersistentFailure(feedGroup, feed.RSSUrl, "RenderFailed", err)
 			}
-			continue
+
+			// Stop processing this feed's remaining entries for this
+			// reconcile rather than continuing to the next one: entries are
+			// sent oldest-to-newest, and a later entry's success advances
+			// LastSeenEntry (below) past everything up to it. If we kept
+			// going past this failed entry, a subsequent success would push
+			// the watermark past it too, and the next reconcile's forward-
+			// scan would then treat it as "already handled" and never
+			// attempt it again -- silently dropping it for good. Stopping
+			// here, like the rate-limit branch below already does, keeps
+			// the watermark from ever skipping an unresolved entry; it just
+			// means later entries in the same feed wait behind this one
+			// instead of jumping ahead.
+			pending = true
+			break
 		}
 
 		sendStart := time.Now()
@@ -553,6 +570,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 				// Stop sending the rest of this feed's entries; the unsent ones
 				// stay pending (validators aren't persisted below) and are
 				// retried after the requeue backs off for RetryAfter.
+				pending = true
 				break
 			} else {
 				class := classifySendError(err)
@@ -568,11 +586,28 @@ func (r *FeedGroupReconciler) sendNewEntries(
 				maxRetries := maxRetryCount(feedGroup.Spec.Retries)
 				if fs.RetryCount < maxRetries {
 					wantRetry = true
-				} else if fs.RetryCount == maxRetries {
-					r.recordPersistentFailure(feedGroup, feed.RSSUrl, "SendFailed", err)
+				} else {
+					if fs.RetryCount == maxRetries {
+						r.recordPersistentFailure(feedGroup, feed.RSSUrl, "SendFailed", err)
+					}
+					// A permanent classification (e.g. a deleted webhook, or
+					// a malformed message Discord will keep rejecting) won't
+					// recover on its own, so back off exponentially the same
+					// way a permanent fetch failure does instead of retrying
+					// at full Interval cadence forever. A transient
+					// classification (5xx, timeout) keeps retrying at that
+					// cadence since it's expected to recover on its own.
+					if class.permanent {
+						r.applyPermanentBackoff(feedGroup, fs, feed.RSSUrl, "SendFailed", err)
+					}
 				}
 			}
-			continue
+			// See the matching comment on the render-error branch above:
+			// stop here rather than continuing to the next entry, so a later
+			// entry's success can't advance LastSeenEntry past this unsent
+			// one and silently skip it for good.
+			pending = true
+			break
 		}
 
 		fs.LastSent[entryKey] = now
@@ -585,7 +620,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, outcomeSent).Inc()
 	}
 
-	return wantRetry, rateLimitRetryAfter
+	return wantRetry, rateLimitRetryAfter, pending
 }
 
 // markFeedCheckSuccess records that a feed was successfully checked this
@@ -596,6 +631,27 @@ func (r *FeedGroupReconciler) sendNewEntries(
 func markFeedCheckSuccess(feedGroup *v1alpha1.FeedGroup) {
 	feedLastSuccessTimestamp.WithLabelValues(feedGroup.Namespace, feedGroup.Name).
 		Set(float64(time.Now().Unix()))
+}
+
+// applyPermanentBackoff sets fs.BackoffUntil using exponential backoff
+// (permanentBackoffDuration, based on fs.RetryCount, which the caller has
+// already incremented for this failure), capped at maxPermanentBackoff via
+// the sentinel. Shared by the fetch- and send-permanent-failure paths so a
+// feed/entry that can't recover on its own backs off the same way instead of
+// retrying at full Interval cadence forever. reason/err identify the Warning
+// Event fired the first time the cap is reached -- not on every occurrence
+// after, since subsequent reconciles skip the feed entirely at the
+// active-feeds filter once BackoffUntil is the sentinel, so this branch is
+// never re-entered for the same failure.
+func (r *FeedGroupReconciler) applyPermanentBackoff(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, rssURL, reason string, err error) {
+	base, _ := parseDurationWithDefault(feedGroup.Spec.RetryInterval, 5*time.Minute)
+	backoff := permanentBackoffDuration(fs.RetryCount, base)
+	if backoff >= maxPermanentBackoff {
+		fs.BackoffUntil = permanentBackoffSentinel
+		r.recordPersistentFailure(feedGroup, rssURL, reason, err)
+	} else {
+		fs.BackoffUntil = time.Now().UTC().Add(backoff).Format(time.RFC3339)
+	}
 }
 
 // recordPersistentFailure emits a Warning Event on feedGroup once a feed's
@@ -1133,6 +1189,13 @@ func buildDiscordMessage(
 			AuthorName:   embedSpec.AuthorName,
 			FooterText:   embedSpec.FooterText,
 		}
+		// SendMessage clamps title+description+footer+author to Discord's
+		// combined 6000-char embed budget, trimming Description further
+		// still if the per-field truncation above wasn't enough. That clamp
+		// happens inside the discord package, after this function returns,
+		// so without folding it in here it would silently undercount actual
+		// truncation.
+		overflow += discord.EmbedTotalLengthOverflow(*msg.Embed)
 	} else {
 		content, contentOverflow, err := renderTemplate(contentTmpl, entry, maxDiscordMessageLength)
 		if err != nil {
