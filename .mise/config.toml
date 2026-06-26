@@ -129,6 +129,64 @@ mkdir -p dist
 kustomize build config/default > dist/install.yaml
 '''
 
+##@ Helm Chart
+
+[tasks.helm-chart-refresh]
+description = "Regenerate dist/chart/ from config/ via kubebuilder's helm/v2-alpha plugin, preserving hand-tuned templates"
+depends = ["build-installer"]
+run = '''
+set -euo pipefail
+
+# The helm/v2-alpha plugin always shells out to `make manifests`, `make
+# generate`, and `make build-installer`, but this project has no Makefile —
+# mise tasks are the only source of truth (see CLAUDE.md). Shim one in for
+# the duration of this task that just delegates back to mise.
+cat > Makefile <<'MAKEFILE'
+manifests:
+	mise run manifests
+generate:
+	mise run generate
+build-installer:
+	mise run build-installer
+MAKEFILE
+
+# Without --force, the plugin already leaves Chart.yaml, values.yaml,
+# _helpers.tpl, NOTES.txt, .helmignore, .github/workflows/test-chart.yml,
+# and templates/network-policy/* untouched -- confirmed empirically, not
+# just from --help text. Never pass --force: it regenerates those too,
+# discarding the hand-tuned values.yaml/_helpers.tpl sections (prometheus,
+# prometheusRule, grafanaDashboard values; the controllerManagerName
+# helper). It also has no effect on files it doesn't recognize at all --
+# templates/prometheus/grafana-dashboard.yaml, prometheus-rule.yaml, and
+# dashboards/*.json survive any regen, forced or not, because the plugin
+# only ever touches its own known scaffold set.
+#
+# The plugin *does* always regenerate these three templates regardless of
+# --force, since it doesn't know about our shortened resource-name suffixes
+# or the native-histogram ServiceMonitor fields. Back them up so we can
+# restore the hand-tuned versions after regenerating everything else
+# (CRDs, RBAC, the rest of templates/).
+preserved="dist/chart/templates/manager/manager.yaml dist/chart/templates/metrics/controller-manager-metrics-service.yaml dist/chart/templates/prometheus/controller-manager-metrics-monitor.yaml"
+backup_dir="$(mktemp -d)"
+trap 'rm -f Makefile; rm -rf "$backup_dir"' EXIT
+for f in $preserved; do
+  mkdir -p "$backup_dir/$(dirname "$f")"
+  cp "$f" "$backup_dir/$f"
+done
+
+kubebuilder edit --plugins=helm/v2-alpha
+
+echo "--- upstream drift in preserved templates (discarded below; review if kubebuilder/the plugin was upgraded) ---"
+for f in $preserved; do
+  diff -u "$backup_dir/$f" "$f" || true
+  cp "$backup_dir/$f" "$f"
+done
+
+helm lint dist/chart
+echo "--- dist/chart diff ---"
+git diff --stat -- dist/chart dist/install.yaml
+'''
+
 ##@ Deployment
 
 [tasks.install]
