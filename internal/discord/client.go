@@ -287,18 +287,32 @@ func embedToPayload(e Embed) discordEmbed {
 	return payload
 }
 
+// EmbedTotalLengthOverflow reports how many runes of e.Description
+// SendMessage will trim to satisfy Discord's combined embed length limit
+// (maxEmbedTotalLength), without performing the trim. Exported so a caller
+// that already measures its own per-field truncation for metrics (see
+// internal/controller/feedgroup_controller.go's messageOverflowChars) can
+// fold this clamp into the same count -- otherwise it happens invisibly
+// inside SendMessage, after the caller has already taken its measurement.
+func EmbedTotalLengthOverflow(e Embed) int {
+	total := len([]rune(e.Title)) + len([]rune(e.Description)) + len([]rune(e.FooterText)) + len([]rune(e.AuthorName))
+	if total <= maxEmbedTotalLength {
+		return 0
+	}
+	return total - maxEmbedTotalLength
+}
+
 // clampEmbedTotalLength shrinks Description, the field with the most slack,
 // until title+description+footer+author fits within maxEmbedTotalLength.
 // Title/footer/author come from feed config and entry titles, which are
 // short in practice, so trimming the (often long) description is the least
 // surprising way to enforce the limit.
 func clampEmbedTotalLength(e Embed) Embed {
-	total := len([]rune(e.Title)) + len([]rune(e.Description)) + len([]rune(e.FooterText)) + len([]rune(e.AuthorName))
-	if total <= maxEmbedTotalLength {
+	overflow := EmbedTotalLengthOverflow(e)
+	if overflow == 0 {
 		return e
 	}
 
-	overflow := total - maxEmbedTotalLength
 	descRunes := []rune(e.Description)
 	newLen := max(len(descRunes)-overflow, 0)
 	e.Description = truncateRunes(descRunes, newLen)
