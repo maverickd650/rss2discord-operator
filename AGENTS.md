@@ -289,10 +289,13 @@ kubectl apply -f https://raw.githubusercontent.com/<org>/<repo>/<tag>/dist/insta
 
 ### Option 2: Helm Chart
 
+This repo already has a generated `dist/chart/`; the commands below are for generating one
+from scratch in a new project (`--output-dir` to use a different directory than `dist`):
 ```bash
 kubebuilder edit --plugins=helm/v2-alpha                      # Generates dist/chart/ (default)
 kubebuilder edit --plugins=helm/v2-alpha --output-dir=charts  # Generates charts/chart/
 ```
+To refresh this repo's existing chart, use `mise run helm-chart-refresh` instead — see below.
 
 **For development:**
 ```bash
@@ -309,10 +312,39 @@ mise run helm-rollback                                    # Rollback to previous
 helm install my-release ./<output-dir>/chart/ --namespace <ns> --create-namespace
 ```
 
-**Important:** If you add webhooks or modify manifests after initial chart generation:
-1. Backup any customizations in `<output-dir>/chart/values.yaml` and `<output-dir>/chart/manager/manager.yaml`
-2. Re-run: `kubebuilder edit --plugins=helm/v2-alpha --force` (use same `--output-dir` if customized)
-3. Manually restore your custom values from the backup
+**Refreshing the chart:** whenever `api/v1alpha1/*_types.go`, `config/manager`, or `config/rbac`
+change, `dist/chart/` needs regenerating to match. Run:
+```bash
+mise run helm-chart-refresh
+```
+This wraps `kubebuilder edit --plugins=helm/v2-alpha` and prints a `git diff --stat` of what
+changed, so review that before committing. Don't run the raw `kubebuilder edit` command by
+hand — it shells out to `make manifests`/`make generate`/`make build-installer` internally and
+this project has no Makefile (mise tasks are the source of truth instead), so the mise task
+shims one in for the duration of the run.
+
+Without `--force`, the plugin already leaves `Chart.yaml`, `values.yaml`, `_helpers.tpl`,
+`NOTES.txt`, `.helmignore`, `.github/workflows/test-chart.yml`, and `templates/network-policy/*`
+untouched on every run (confirmed empirically, not just from `--help` text) — that's where this
+chart's hand-tuned `values.yaml` sections (`prometheus.scrapeNativeHistograms`,
+`prometheusRule.*`, `grafanaDashboard.*`) and the `controllerManagerName` helper in
+`_helpers.tpl` live. The plugin also never touches files it doesn't recognize at all —
+`templates/prometheus/grafana-dashboard.yaml`, `templates/prometheus/prometheus-rule.yaml`, and
+`dashboards/*.json` are wholly custom and survive any regen untouched.
+
+The one gap: three templates the plugin *does* always regenerate, because it doesn't know
+about this project's shortened resource-name suffixes or the native-histogram ServiceMonitor
+fields — `templates/manager/manager.yaml`, `templates/metrics/controller-manager-metrics-service.yaml`,
+and `templates/prometheus/controller-manager-metrics-monitor.yaml`. `mise run
+helm-chart-refresh` backs these three up before regenerating and restores them afterward,
+printing a diff of what upstream kubebuilder would have changed so you can tell if a future
+kubebuilder/plugin upgrade altered their stock shape underneath the hand edits.
+
+Never pass `--force`: it additionally regenerates `values.yaml` and `_helpers.tpl` from
+scratch, discarding the hand-tuned sections above. (It still doesn't touch the wholly-custom
+prometheus/grafana files or `Chart.yaml` — the plugin only ever overwrites files in its own
+known scaffold set, `--force` or not.) If you ever do need to rebuild `values.yaml`/`manager.yaml`
+from a clean slate, you'll need to manually re-port the hand-tuned sections back in afterward.
 
 ### Publish Container Image
 
