@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -108,7 +109,7 @@ func newDefaultHTTPClient() *http.Client {
 			if err != nil {
 				return nil, err
 			}
-			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 			if err != nil {
 				return nil, err
 			}
@@ -129,21 +130,17 @@ func newDefaultHTTPClient() *http.Client {
 }
 
 // cgnatBlock is the shared address space carriers use for NAT
-// (RFC 6598, 100.64.0.0/10). net.IP.IsPrivate doesn't cover it, but like
+// (RFC 6598, 100.64.0.0/10). netip.Addr.IsPrivate doesn't cover it, but like
 // RFC 1918 space it can route to internal infrastructure that a feed URL
 // must not be able to reach.
-var cgnatBlock = func() *net.IPNet {
-	_, block, _ := net.ParseCIDR("100.64.0.0/10")
-	return block
-}()
+var cgnatBlock = netip.MustParsePrefix("100.64.0.0/10")
 
-func isPublicIP(ip net.IP) bool {
+func isPublicIP(ip netip.Addr) bool {
 	// Unwrap IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) so the checks below
-	// (several of which only special-case the 4-byte form) see the actual
-	// IPv4 address instead of treating it as an opaque IPv6 literal.
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	}
+	// (cgnatBlock.Contains in particular: an IPv4-mapped address never
+	// matches an IPv4 prefix) see the actual IPv4 address instead of treating
+	// it as an opaque IPv6 literal.
+	ip = ip.Unmap()
 
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || cgnatBlock.Contains(ip) {

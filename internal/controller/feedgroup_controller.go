@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"maps"
 	neturl "net/url"
 	"regexp"
 	"slices"
@@ -229,21 +230,19 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	sem := make(chan struct{}, maxConcurrentFetches)
 	var wg sync.WaitGroup
 	for i, feed := range activeFeeds {
-		wg.Add(1)
-		go func(i int, rssURL string) {
-			defer wg.Done()
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			fs := feedStatusFor(&feedGroup, rssURL)
+			fs := feedStatusFor(&feedGroup, feed.RSSUrl)
 			validators := rss.CacheValidators{
 				ETag:         fs.ETag,
 				LastModified: fs.LastModified,
 			}
 			start := time.Now()
-			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, rssURL, validators)
+			fetched[i], fetchErrs[i] = rssClient.FetchEntries(ctx, feed.RSSUrl, validators)
 			feedRequestDuration.WithLabelValues(feedGroup.Namespace, feedGroup.Name, operationFetch).
 				Observe(time.Since(start).Seconds())
-		}(i, feed.RSSUrl)
+		})
 	}
 	wg.Wait()
 
@@ -566,8 +565,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
 			fs.LastError = err.Error()
 
-			var rateLimitErr *discord.RateLimitError
-			if errors.As(err, &rateLimitErr) {
+			if rateLimitErr, ok := errors.AsType[*discord.RateLimitError](err); ok {
 				wantRetry = true
 				feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeRateLimited).Inc()
 				setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
@@ -891,11 +889,7 @@ func dominantErrorReason(reasons map[string]string) string {
 		counts[reason]++
 	}
 
-	keys := make([]string, 0, len(counts))
-	for reason := range counts {
-		keys = append(keys, reason)
-	}
-	slices.Sort(keys)
+	keys := slices.Sorted(maps.Keys(counts))
 
 	best := keys[0]
 	for _, key := range keys[1:] {
@@ -1267,11 +1261,7 @@ func pruneLastSent(sent map[string]string, max int) {
 		return
 	}
 
-	keys := make([]string, 0, len(sent))
-	for key := range sent {
-		keys = append(keys, key)
-	}
-	slices.SortFunc(keys, func(a, b string) int {
+	keys := slices.SortedFunc(maps.Keys(sent), func(a, b string) int {
 		return strings.Compare(sent[a], sent[b])
 	})
 

@@ -3,9 +3,9 @@ package rss
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -339,9 +339,9 @@ func TestIsPublicIP(t *testing.T) {
 		{"::ffff:8.8.8.8", true},    // IPv4-mapped IPv6 public
 	}
 	for _, tc := range cases {
-		ip := net.ParseIP(tc.ip)
-		if ip == nil {
-			t.Fatalf("failed to parse test IP %q", tc.ip)
+		ip, err := netip.ParseAddr(tc.ip)
+		if err != nil {
+			t.Fatalf("failed to parse test IP %q: %v", tc.ip, err)
 		}
 		if got := isPublicIP(ip); got != tc.public {
 			t.Errorf("isPublicIP(%s) = %v, want %v", tc.ip, got, tc.public)
