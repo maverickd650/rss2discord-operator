@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.8.0...v0.9.0) (2026-06-26)
+
+
+### Features
+
+* add mise task to refresh dist/chart from config/ without clobbering hand edits ([#81](https://github.com/maverickd650/rss2discord-operator/issues/81)) ([38c4c88](https://github.com/maverickd650/rss2discord-operator/commit/38c4c888956eb32b3257643059cd1f28b20ef70a))
+* identify the failing feed and reason in fetch/send-error alerts ([#83](https://github.com/maverickd650/rss2discord-operator/issues/83)) ([b8ada6c](https://github.com/maverickd650/rss2discord-operator/commit/b8ada6c61c1d8c9b5b5de1aefc168ef640d08fc1))
+
 ## [0.8.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.7.0...v0.8.0) (2026-06-26)
 
 
