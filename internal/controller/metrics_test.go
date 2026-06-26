@@ -257,6 +257,37 @@ func TestProcessFeed_NoOverflowMetricWhenContentFits(t *testing.T) {
 	}
 }
 
+// TestProcessFeed_RecordsMessageOverflowFromEmbedTotalLengthClamp asserts
+// that messageOverflowChars also counts truncation caused by Discord's
+// combined embed length limit (title+description+footer+author <= 6000),
+// which is enforced inside the discord package (clampEmbedTotalLength)
+// rather than by the per-field truncation buildDiscordMessage measures
+// directly. Title and Description here individually stay well under their
+// own limits, so only the combined-length clamp can be responsible for any
+// recorded overflow.
+func TestProcessFeed_RecordsMessageOverflowFromEmbedTotalLengthClamp(t *testing.T) {
+	ctx := context.Background()
+	ns, name := "metrics-embed-total-overflow", "fg-embed-total-overflow"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+
+	fg, feed := newMetricsFeedGroup(ns, name, "")
+	feed.Embed = &v1alpha1.EmbedSpec{
+		Enabled:    true,
+		AuthorName: strings.Repeat("a", 3000),
+		FooterText: strings.Repeat("f", 3500),
+	}
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	(&FeedGroupReconciler{}).processFeed(ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
+
+	if got := messageOverflowSampleCount(t, ns, name); got != 1 {
+		t.Fatalf("messageOverflowChars sample count = %d, want 1", got)
+	}
+}
+
 // assertNativeOnlyHistogram fails the test unless m has a native histogram
 // schema and no classic buckets, i.e. it isn't exposed twice (once as
 // classic, once as native) for the same observations.

@@ -169,3 +169,30 @@ func TestClampEmbedTotalLength_UnderLimitUnchanged(t *testing.T) {
 		t.Fatalf("expected description unchanged under limit, got %q", got.Description)
 	}
 }
+
+// TestEmbedTotalLengthOverflow_MatchesClamp asserts the overflow reported by
+// the exported EmbedTotalLengthOverflow (which a caller uses purely for
+// metrics) is exactly how much clampEmbedTotalLength actually trims, so a
+// caller folding this into its own truncation count doesn't over- or
+// under-report.
+func TestEmbedTotalLengthOverflow_MatchesClamp(t *testing.T) {
+	e := Embed{Title: "t", Description: strings.Repeat("d", maxEmbedTotalLength), FooterText: "f", AuthorName: "a"}
+
+	overflow := EmbedTotalLengthOverflow(e)
+	if overflow == 0 {
+		t.Fatal("expected a non-zero overflow when combined fields exceed maxEmbedTotalLength")
+	}
+
+	clamped := clampEmbedTotalLength(e)
+	wantDescLen := len([]rune(e.Description)) - overflow
+	if got := len([]rune(clamped.Description)); got != wantDescLen {
+		t.Fatalf("clamped description length = %d, want %d (overflow %d)", got, wantDescLen, overflow)
+	}
+}
+
+func TestEmbedTotalLengthOverflow_UnderLimitIsZero(t *testing.T) {
+	e := Embed{Title: "t", Description: "d", FooterText: "f", AuthorName: "a"}
+	if got := EmbedTotalLengthOverflow(e); got != 0 {
+		t.Fatalf("expected 0 overflow under the limit, got %d", got)
+	}
+}
