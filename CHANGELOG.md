@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.9.1...v0.10.0) (2026-06-27)
+
+
+### Features
+
+* **api:** harden FeedGroup CRD validation and field types ([#93](https://github.com/maverickd650/rss2discord-operator/issues/93)) ([605ed9e](https://github.com/maverickd650/rss2discord-operator/commit/605ed9ee85ad96bff8a7f5993b5d8bd1958c0d1f))
+
 ## [0.9.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.9.0...v0.9.1) (2026-06-27)
 
 
