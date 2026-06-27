@@ -202,7 +202,7 @@ func TestRequeueWithStatus_InvalidIntervalReturnsError(t *testing.T) {
 
 func TestMaxRetryCount(t *testing.T) {
 	cases := []struct {
-		in, want int
+		in, want int32
 	}{
 		{in: -1, want: 1},
 		{in: 0, want: 1},

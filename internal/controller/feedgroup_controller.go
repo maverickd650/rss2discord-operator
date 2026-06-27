@@ -444,7 +444,7 @@ func (r *FeedGroupReconciler) processFeed(
 		hasSeenID = false
 	}
 	if !hasSeenID {
-		entries = limitCatchUp(entries, feedGroup.Spec.CatchUpLimit)
+		entries = limitCatchUp(entries, int(feedGroup.Spec.CatchUpLimit))
 	}
 
 	var pending bool
@@ -653,7 +653,7 @@ func markFeedCheckSuccess(feedGroup *v1alpha1.FeedGroup) {
 // never re-entered for the same failure.
 func (r *FeedGroupReconciler) applyPermanentBackoff(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, rssURL, reason string, err error) {
 	base, _ := parseDurationWithDefault(feedGroup.Spec.RetryInterval, 5*time.Minute)
-	backoff := permanentBackoffDuration(fs.RetryCount, base)
+	backoff := permanentBackoffDuration(int(fs.RetryCount), base)
 	if backoff >= maxPermanentBackoff {
 		fs.BackoffUntil = permanentBackoffSentinel
 		r.recordPersistentFailure(feedGroup, rssURL, reason, err)
@@ -1308,7 +1308,7 @@ func parseDurationWithDefault(value string, fallback time.Duration) (time.Durati
 	return duration, nil
 }
 
-func maxRetryCount(specRetries int) int {
+func maxRetryCount(specRetries int32) int32 {
 	if specRetries < 1 {
 		return 1
 	}
