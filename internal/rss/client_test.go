@@ -331,12 +331,15 @@ func TestIsPublicIP(t *testing.T) {
 		{"0.0.0.0", false},
 		{"::1", false},
 		{"fe80::1", false},
-		{"100.64.0.1", false},       // carrier-grade NAT (RFC 6598)
-		{"100.127.255.254", false},  // top of the CGNAT block
-		{"100.63.255.255", true},    // just below the CGNAT block
-		{"::ffff:127.0.0.1", false}, // IPv4-mapped IPv6 loopback
-		{"::ffff:10.0.0.1", false},  // IPv4-mapped IPv6 private
-		{"::ffff:8.8.8.8", true},    // IPv4-mapped IPv6 public
+		{"100.64.0.1", false},               // carrier-grade NAT (RFC 6598)
+		{"100.127.255.254", false},          // top of the CGNAT block
+		{"100.63.255.255", true},            // just below the CGNAT block
+		{"::ffff:127.0.0.1", false},         // IPv4-mapped IPv6 loopback
+		{"::ffff:10.0.0.1", false},          // IPv4-mapped IPv6 private
+		{"::ffff:8.8.8.8", true},            // IPv4-mapped IPv6 public
+		{"64:ff9b::169.254.169.254", false}, // NAT64 (RFC 6052) cloud metadata endpoint
+		{"64:ff9b::10.0.0.1", false},        // NAT64 (RFC 6052) embedding a private address
+		{"64:ff9b::8.8.8.8", true},          // NAT64 (RFC 6052) embedding a public address
 	}
 	for _, tc := range cases {
 		ip, err := netip.ParseAddr(tc.ip)
