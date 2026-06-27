@@ -61,3 +61,17 @@ Cross-cutting designs that span multiple files (change these carefully):
 ## Do not edit (auto-generated)
 
 `config/crd/bases/*.yaml`, `config/rbac/role.yaml`, `**/zz_generated.*.go` (from `mise run manifests`/`generate`), and `PROJECT` (kubebuilder). Never delete `// +kubebuilder:scaffold:*` markers. Use `kubebuilder create api`/`create webhook` to scaffold — don't hand-create those files. Edit `config/samples/*` (example CRs) freely.
+
+## Never write bare cross-repo issue/PR references
+
+Don't write `owner/repo#123` (e.g. `kubernetes-sigs/kubebuilder#4809`) anywhere that becomes a commit
+message, PR title/body, or comment in this repo — not even when citing an upstream issue as
+background/rationale. GitHub auto-links that exact syntax and creates a "mentioned this issue"
+notification on the *other* repo, pinging its maintainers about something they have no connection
+to and didn't consent to. This isn't hypothetical: it happened once already (a PR description cited
+an upstream kubebuilder issue this way, got squash-merged into `main`, and had to be scrubbed via a
+history rewrite — see PR for this fix).
+
+If you need to cite an external issue/PR, write it so GitHub won't autolink it: use the full URL
+(`https://github.com/owner/repo/issues/123`) or break the pattern (`owner/repo issue 123`), never the
+bare `owner/repo#123` shorthand.

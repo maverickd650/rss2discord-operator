@@ -49,6 +49,12 @@ generate `CHANGELOG.md` automatically, so this isn't just a style preference.
 Branch protection on `main` requires PRs to pass Lint, Test, and E2E Tests before merging — see
 the [PR template](.github/PULL_REQUEST_TEMPLATE.md) checklist for what to run locally first.
 
+**Never write a bare `owner/repo#123` reference** (e.g. `kubernetes-sigs/kubebuilder#4809`) in a
+commit message, PR title/body, or comment — even just to cite an upstream issue for context.
+GitHub autolinks that exact syntax and posts a cross-reference notification on the *other* repo's
+issue, pinging its maintainers about a repo they have nothing to do with. If you need to cite an
+external issue, use the full URL or phrase it as `owner/repo issue 123` instead.
+
 ## Code of Conduct
 
 This project follows the [Contributor Covenant](.github/CODE_OF_CONDUCT.md).
