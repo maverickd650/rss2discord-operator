@@ -527,7 +527,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterSecond)).To(Succeed())
 			Expect(feedStatusFor(afterSecond, rssServer.URL()).LastSeenEntry).To(Equal(lastSeenAfterFirst))
 			Expect(feedsWithError(afterSecond)).To(Equal(0))
-			Expect(feedStatusFor(afterSecond, rssServer.URL()).RetryCount).To(Equal(0))
+			Expect(feedStatusFor(afterSecond, rssServer.URL()).RetryCount).To(Equal(int32(0)))
 
 			By("Verifying the unchanged-status reconcile skipped the status write entirely")
 			Expect(afterSecond.ResourceVersion).To(Equal(resourceVersionAfterFirst))
@@ -1416,7 +1416,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(readyCondition).NotTo(BeNil())
 			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(readyCondition.Reason).To(Equal("FeedErrors"))
-			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(1))
+			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(int32(1)))
 			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
 
 			By("Reconciling again to exhaust the configured retries")
@@ -1427,7 +1427,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying a persistent-failure Event was recorded once retries were exhausted")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupNameRetry, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(2))
+			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(int32(2)))
 			Eventually(recorder.Events).Should(Receive(ContainSubstring("FetchFailed")))
 
 			By("Verifying the FeedReachable condition and classified error reason")
@@ -1445,7 +1445,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying no second persistent-failure Event fires for the same ongoing failure")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupNameRetry, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(3))
+			Expect(feedStatusFor(updated, rssServer.URL).RetryCount).To(Equal(int32(3)))
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
@@ -1600,7 +1600,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			updated := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(feedStatusFor(updated, rssServer.URL()).LastError).NotTo(BeEmpty())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(1))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(1)))
 			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
 
 			By("Reconciling again to exhaust the configured retries")
@@ -1611,7 +1611,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying a persistent-failure Event was recorded once retries were exhausted, instead of retrying forever")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(2))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(2)))
 			Eventually(recorder.Events).Should(Receive(ContainSubstring("RenderFailed")))
 
 			By("Reconciling a third time, with the entry still failing to render the same way")
@@ -1622,7 +1622,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying no second persistent-failure Event fires for the same ongoing failure")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(3))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(3)))
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
@@ -1704,7 +1704,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			updated := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(feedStatusFor(updated, rssServer.URL()).LastError).NotTo(BeEmpty())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(1))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(1)))
 			Expect(recorder.Events).To(BeEmpty(), "no event should fire before retries are exhausted")
 
 			By("Reconciling again to exhaust the configured retries")
@@ -1715,7 +1715,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying a persistent-failure Event was recorded once retries were exhausted, instead of retrying forever")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(2))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(2)))
 			Expect(discordServer.MessageCount()).To(Equal(0))
 			Eventually(recorder.Events).Should(Receive(ContainSubstring("SendFailed")))
 
@@ -1727,7 +1727,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Verifying no second persistent-failure Event fires for the same ongoing failure")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(3))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(3)))
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
@@ -1914,7 +1914,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			By("Verifying retries are exhausted but the entry was never delivered")
 			updated := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
-			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(2))
+			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(2)))
 			Expect(discordServer.MessageCount()).To(Equal(0))
 
 			By("Verifying the ETag was NOT persisted while the entry is still unsent")
