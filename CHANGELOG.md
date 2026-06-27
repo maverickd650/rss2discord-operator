@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.9.0...v0.9.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **deps:** bump go.opentelemetry.io/otel/sdk to v1.44.0 ([#85](https://github.com/maverickd650/rss2discord-operator/issues/85)) ([e86dbdf](https://github.com/maverickd650/rss2discord-operator/commit/e86dbdf74b3d6ca4cb233348daad286876b28bea))
+* **rss:** close NAT64 (RFC 6052) SSRF guard bypass in isPublicIP ([#90](https://github.com/maverickd650/rss2discord-operator/issues/90)) ([868833c](https://github.com/maverickd650/rss2discord-operator/commit/868833ce38f668caf2fbe79e76dd7d07f6c1ad66))
+
 ## [0.9.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.8.0...v0.9.0) (2026-06-26)
 
 
