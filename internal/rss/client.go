@@ -135,12 +135,24 @@ func newDefaultHTTPClient() *http.Client {
 // must not be able to reach.
 var cgnatBlock = netip.MustParsePrefix("100.64.0.0/10")
 
+// nat64Prefix is the NAT64 "Well-Known Prefix" (RFC 6052, 64:ff9b::/96).
+// Like the IPv4-mapped form Unmap() handles, addresses under it embed an
+// IPv4 address in their low 32 bits, but Unmap() doesn't recognize this
+// prefix -- without unwrapping it separately, a NAT64-synthesized address
+// embedding a private or metadata-endpoint IPv4 address would be treated as
+// an opaque, public IPv6 literal.
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
 func isPublicIP(ip netip.Addr) bool {
 	// Unwrap IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) so the checks below
 	// (cgnatBlock.Contains in particular: an IPv4-mapped address never
 	// matches an IPv4 prefix) see the actual IPv4 address instead of treating
 	// it as an opaque IPv6 literal.
 	ip = ip.Unmap()
+	if nat64Prefix.Contains(ip) {
+		b := ip.As16()
+		ip = netip.AddrFrom4([4]byte(b[12:16]))
+	}
 
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || cgnatBlock.Contains(ip) {
