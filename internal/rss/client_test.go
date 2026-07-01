@@ -113,6 +113,24 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	}
 }
 
+func TestFetchEntries_SendsUserAgent(t *testing.T) {
+	var gotUserAgent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUserAgent = r.Header.Get("User-Agent")
+		_, _ = w.Write([]byte(sampleRSS))
+	}))
+	defer srv.Close()
+
+	c := NewClient(&http.Client{})
+	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotUserAgent != userAgent {
+		t.Fatalf("got User-Agent %q, want %q", gotUserAgent, userAgent)
+	}
+}
+
 func TestFetchEntries_StoresValidatorsFromSuccessfulResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"new-etag"`)
@@ -340,6 +358,14 @@ func TestIsPublicIP(t *testing.T) {
 		{"64:ff9b::169.254.169.254", false}, // NAT64 (RFC 6052) cloud metadata endpoint
 		{"64:ff9b::10.0.0.1", false},        // NAT64 (RFC 6052) embedding a private address
 		{"64:ff9b::8.8.8.8", true},          // NAT64 (RFC 6052) embedding a public address
+		{"198.18.0.1", false},               // RFC 2544 benchmarking space
+		{"198.19.255.255", false},           // top of the benchmarking block
+		{"198.20.0.1", true},                // just above the benchmarking block
+		{"240.0.0.1", false},                // reserved/"Class E" space
+		{"255.255.255.255", false},          // limited broadcast
+		{"0.0.0.1", false},                  // "this network" (RFC 791)
+		{"2002:0a00:0001::", false},         // 6to4 (RFC 3056) embedding a private address
+		{"2002:0808:0808::", true},          // 6to4 (RFC 3056) embedding a public address
 	}
 	for _, tc := range cases {
 		ip, err := netip.ParseAddr(tc.ip)

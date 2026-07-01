@@ -27,6 +27,37 @@ func TestSendMessage_RejectsNonDiscordHost(t *testing.T) {
 	}
 }
 
+func TestSendMessage_DoesNotFollowRedirect(t *testing.T) {
+	attackerHit := false
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHit = true
+	}))
+	defer attacker.Close()
+
+	// An allowlisted host redirecting to an arbitrary attacker-controlled
+	// server. NewHTTPClient's CheckRedirect must stop http.Client from
+	// transparently following it and replaying the message content there.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	AllowedWebhookHosts["127.0.0.1"] = true
+	defer delete(AllowedWebhookHosts, "127.0.0.1")
+
+	client := srv.Client()
+	client.CheckRedirect = NewHTTPClient().CheckRedirect
+
+	c := NewClientWithHTTP(srv.URL, client)
+	err := c.SendMessageText(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected the unfollowed redirect's 3xx status to surface as an error")
+	}
+	if attackerHit {
+		t.Fatal("redirect target must never receive the request")
+	}
+}
+
 func TestSendMessage_RejectsHTTPScheme(t *testing.T) {
 	c := NewClient("http://discord.com/api/webhooks/123/abc")
 	err := c.SendMessageText(context.Background(), "hello")

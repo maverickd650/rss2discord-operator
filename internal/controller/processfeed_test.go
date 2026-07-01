@@ -61,9 +61,11 @@ func TestProcessFeed_InvalidFilterRegex(t *testing.T) {
 }
 
 // TestProcessFeed_InvalidMessageTemplate asserts a feed whose Format fails
-// to parse as a template is retried (the error may be transient-looking to
-// the reconciler at this layer; persistent-failure handling lives one level
-// up the retry counter) and recorded on status.
+// to parse as a template is not retried -- like the filter-regex case above,
+// a template compile error is a deterministic FeedSpec misconfiguration that
+// won't resolve itself on the normal/retry schedule, so retrying would just
+// pin the group at RetryInterval cadence forever -- and is recorded on
+// status.
 func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 	ctx := context.Background()
 	ns, name := "processfeed-bad-template", "fg-bad-template"
@@ -78,8 +80,8 @@ func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
 		ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
 
-	if !wantRetry {
-		t.Fatal("expected retry for an invalid message template")
+	if wantRetry {
+		t.Fatal("expected no retry for a deterministic message template compile error")
 	}
 	if feedStatusFor(fg, feed.RSSUrl).LastError == "" {
 		t.Fatal("expected LastError to be set for the invalid template")
@@ -90,7 +92,7 @@ func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 }
 
 // TestProcessFeed_InvalidForumThreadNameTemplate asserts a feed with a
-// valid message Format but an unparsable ForumThreadName template is
+// valid message Format but an unparsable ForumThreadName template is not
 // retried and the error is recorded, exercising the thread-name compile
 // branch distinct from the message-template branch above.
 func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
@@ -109,8 +111,8 @@ func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
 		ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
 
-	if !wantRetry {
-		t.Fatal("expected retry for an invalid forum thread name template")
+	if wantRetry {
+		t.Fatal("expected no retry for a deterministic forum thread name template compile error")
 	}
 	if feedStatusFor(fg, feed.RSSUrl).LastError == "" {
 		t.Fatal("expected LastError to be set for the invalid forum thread name template")

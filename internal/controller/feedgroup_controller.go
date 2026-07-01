@@ -384,9 +384,7 @@ func (r *FeedGroupReconciler) processFeed(
 	filterRegex, err := compileFilterRegex(feed.Filter)
 	if err != nil {
 		log.Error(err, "invalid filter regex", "url", feed.RSSUrl)
-		fs.LastError = err.Error()
-		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
-			reasonConfigError, err.Error(), feedGroup.Generation)
+		r.recordConfigError(feedGroup, fs, feed.RSSUrl, err)
 		return false, 0
 	}
 
@@ -400,20 +398,16 @@ func (r *FeedGroupReconciler) processFeed(
 	}
 	if err != nil {
 		log.Error(err, "invalid Discord message template", "url", feed.RSSUrl)
-		fs.LastError = err.Error()
-		setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
-			reasonConfigError, err.Error(), feedGroup.Generation)
-		return true, 0
+		r.recordConfigError(feedGroup, fs, feed.RSSUrl, err)
+		return false, 0
 	}
 
 	if strings.TrimSpace(feed.ForumThreadName) != "" {
 		threadNameTmpl, err = compileTemplate("discordThreadName", feed.ForumThreadName, "")
 		if err != nil {
 			log.Error(err, "invalid Discord forum thread name template", "url", feed.RSSUrl)
-			fs.LastError = err.Error()
-			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
-				reasonConfigError, err.Error(), feedGroup.Generation)
-			return true, 0
+			r.recordConfigError(feedGroup, fs, feed.RSSUrl, err)
+			return false, 0
 		}
 	}
 
@@ -675,6 +669,24 @@ func (r *FeedGroupReconciler) recordPersistentFailure(feedGroup *v1alpha1.FeedGr
 		"feed %s: giving up after exhausting retries: %v", url, err)
 }
 
+// recordConfigError updates fs to reflect a deterministic FeedSpec
+// misconfiguration (an invalid filter regex or message/thread-name
+// template): these won't be fixed by retrying, so unlike a fetch/send
+// failure they carry no RetryCount escalation to gate a one-time Event on.
+// setFeedCondition's changed return serves the same purpose instead: it's
+// true only the reconcile the Delivered condition first flips to
+// ConfigError (or its message changes, e.g. a different typo), not on every
+// subsequent reconcile of the same unresolved error.
+func (r *FeedGroupReconciler) recordConfigError(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, url string, err error) {
+	fs.LastError = err.Error()
+	changed := setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+		reasonConfigError, err.Error(), feedGroup.Generation)
+	if changed && r.Recorder != nil {
+		r.Recorder.Eventf(feedGroup, nil, corev1.EventTypeWarning, reasonConfigError, "InvalidConfig",
+			"feed %s: %v", url, err)
+	}
+}
+
 func (r *FeedGroupReconciler) resolveWebhookURL(ctx context.Context, feedGroup *v1alpha1.FeedGroup) (string, error) {
 	secret := &corev1.Secret{}
 	secretKey := types.NamespacedName{
@@ -746,9 +758,13 @@ func feedStatusFor(feedGroup *v1alpha1.FeedGroup, url string) *v1alpha1.FeedStat
 // setFeedCondition is apimeta.SetStatusCondition scoped to a single feed's
 // Conditions, so call sites read as "what happened" rather than repeating
 // the metav1.Condition literal at every one of the half-dozen places a
-// fetch/render/send outcome needs to update Reachable or Delivered.
-func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.ConditionStatus, reason, message string, generation int64) {
-	apimeta.SetStatusCondition(&fs.Conditions, metav1.Condition{
+// fetch/render/send outcome needs to update Reachable or Delivered. Returns
+// whether the condition was newly added or changed (status/reason/message),
+// so a caller with no RetryCount to gate on (e.g. a config error, which
+// isn't retried) can still fire a one-time Event on the transition into that
+// state instead of every reconcile it recurs.
+func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.ConditionStatus, reason, message string, generation int64) bool {
+	return apimeta.SetStatusCondition(&fs.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
 		Reason:             reason,
@@ -1295,6 +1311,14 @@ func limitCatchUp(entries []rss.Entry, limit int) []rss.Entry {
 	return entries[len(entries)-limit:]
 }
 
+// minParsedInterval floors any interval/retryInterval this parses, whether
+// from FeedGroup spec or already-persisted status. The CRD's Pattern rejects
+// a negative literal, but a tiny positive one ("1ns") still validates and,
+// fed straight into ctrl.Result{RequeueAfter: ...}, would requeue in a tight
+// loop that hammers every feed host on each pass; this floor is the backstop
+// for that, and also for objects admitted under an older, less strict schema.
+const minParsedInterval = 10 * time.Second
+
 func parseDurationWithDefault(value string, fallback time.Duration) (time.Duration, error) {
 	if strings.TrimSpace(value) == "" {
 		return fallback, nil
@@ -1305,7 +1329,7 @@ func parseDurationWithDefault(value string, fallback time.Duration) (time.Durati
 		return fallback, fmt.Errorf("invalid duration %q: %w", value, err)
 	}
 
-	return duration, nil
+	return max(duration, minParsedInterval), nil
 }
 
 func maxRetryCount(specRetries int32) int32 {

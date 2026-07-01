@@ -27,6 +27,11 @@ const maxFeedResponseBytes = 10 * 1024 * 1024 // 10MB
 // reconciliation indefinitely.
 const defaultTimeout = 15 * time.Second
 
+// userAgent identifies fetches as coming from this operator rather than Go's
+// default "Go-http-client/1.1", which several CDNs (Cloudflare, Reddit, ...)
+// block outright.
+const userAgent = "rss2discord-operator (+https://github.com/maverickd650/rss2discord-operator)"
+
 type Entry struct {
 	ID          string
 	Title       string
@@ -135,6 +140,23 @@ func newDefaultHTTPClient() *http.Client {
 // must not be able to reach.
 var cgnatBlock = netip.MustParsePrefix("100.64.0.0/10")
 
+// benchmarkingBlock is RFC 2544 network device benchmarking space
+// (198.18.0.0/15). Not globally routable, but -- like CGNAT space -- seen in
+// practice as an internal range for CNI/service-mesh addressing, so a feed
+// URL must not be able to reach it either.
+var benchmarkingBlock = netip.MustParsePrefix("198.18.0.0/15")
+
+// reservedBlock is IANA "reserved for future use" space (RFC 1112,
+// 240.0.0.0/4, historically "Class E"), which some CNIs/service meshes
+// repurpose as an internal virtual range.
+var reservedBlock = netip.MustParsePrefix("240.0.0.0/4")
+
+// thisNetworkBlock is RFC 791 "this network" space (0.0.0.0/8): non-routable
+// and meaningless as a connection target, but not covered by
+// netip.Addr.IsUnspecified (which only matches the single all-zeros address)
+// or any of the other checks below.
+var thisNetworkBlock = netip.MustParsePrefix("0.0.0.0/8")
+
 // nat64Prefix is the NAT64 "Well-Known Prefix" (RFC 6052, 64:ff9b::/96).
 // Like the IPv4-mapped form Unmap() handles, addresses under it embed an
 // IPv4 address in their low 32 bits, but Unmap() doesn't recognize this
@@ -143,19 +165,31 @@ var cgnatBlock = netip.MustParsePrefix("100.64.0.0/10")
 // an opaque, public IPv6 literal.
 var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
 
+// sixToFourPrefix is the 6to4 anycast prefix (RFC 3056, 2002::/16), which
+// like NAT64's prefix embeds an IPv4 address -- here in bits 16-48 rather
+// than the low 32 bits -- that must be checked in its own right rather than
+// treating the whole address as an opaque, public IPv6 literal.
+var sixToFourPrefix = netip.MustParsePrefix("2002::/16")
+
 func isPublicIP(ip netip.Addr) bool {
 	// Unwrap IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) so the checks below
 	// (cgnatBlock.Contains in particular: an IPv4-mapped address never
 	// matches an IPv4 prefix) see the actual IPv4 address instead of treating
 	// it as an opaque IPv6 literal.
 	ip = ip.Unmap()
-	if nat64Prefix.Contains(ip) {
+	switch {
+	case nat64Prefix.Contains(ip):
 		b := ip.As16()
 		ip = netip.AddrFrom4([4]byte(b[12:16]))
+	case sixToFourPrefix.Contains(ip):
+		b := ip.As16()
+		ip = netip.AddrFrom4([4]byte(b[2:6]))
 	}
 
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() || cgnatBlock.Contains(ip) {
+		ip.IsUnspecified() || ip.IsPrivate() || ip.IsMulticast() ||
+		cgnatBlock.Contains(ip) || benchmarkingBlock.Contains(ip) ||
+		reservedBlock.Contains(ip) || thisNetworkBlock.Contains(ip) {
 		return false
 	}
 	return true
@@ -184,6 +218,7 @@ func (c *Client) FetchEntries(ctx context.Context, feedURL string, validators Ca
 		return FetchResult{}, err
 	}
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml, */*")
+	req.Header.Set("User-Agent", userAgent)
 	if validators.ETag != "" {
 		req.Header.Set("If-None-Match", validators.ETag)
 	}
