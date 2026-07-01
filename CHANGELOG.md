@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.10.0...v0.10.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* harden reconcile interval, SSRF guard, and Discord redirects ([#99](https://github.com/maverickd650/rss2discord-operator/issues/99)) ([a6ffec3](https://github.com/maverickd650/rss2discord-operator/commit/a6ffec36e3f695a7801fc385ee4d1e080a02d452))
+
 ## [0.10.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.9.1...v0.10.0) (2026-06-27)
 
 
