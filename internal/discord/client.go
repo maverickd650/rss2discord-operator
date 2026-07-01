@@ -47,7 +47,18 @@ func NewClientWithHTTP(webhookURL string, httpClient *http.Client) *Client {
 // secret) should construct this once and share it via NewClientWithHTTP, so
 // that connections to discord.com are pooled instead of rebuilt per client.
 func NewHTTPClient() *http.Client {
-	return &http.Client{Timeout: defaultTimeout}
+	return &http.Client{
+		Timeout: defaultTimeout,
+		// SendMessage checks the request URL's host against
+		// AllowedWebhookHosts before sending, but http.Client.Do transparently
+		// follows redirects by default, replaying the POST body (message
+		// content) to whatever Location a response names -- unchecked against
+		// that allowlist. Discord's webhook endpoint has no legitimate reason
+		// to redirect, so refuse to follow one rather than trust it.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // Embed describes a Discord embed ("bubble") to attach to a webhook message,

@@ -137,9 +137,11 @@ type FeedGroupSpec struct {
 	DiscordWebhookSecretRef corev1.SecretKeySelector `json:"discordWebhookSecretRef"`
 
 	// interval is the duration between feed checks (e.g., "30m", "1h"),
-	// parsed by Go's time.ParseDuration.
+	// parsed by Go's time.ParseDuration. Must not be negative: a negative or
+	// unreasonably short interval would requeue the FeedGroup in a tight
+	// reconcile loop, hammering every feed host on each pass.
 	// +default="30m"
-	// +kubebuilder:validation:Pattern=`^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:MinLength=1
 	// +optional
@@ -182,9 +184,11 @@ type FeedGroupSpec struct {
 	Retries int32 `json:"retries,omitempty"`
 
 	// retryInterval is the duration between retries (e.g., "5m"), parsed by
-	// Go's time.ParseDuration.
+	// Go's time.ParseDuration. Must not be negative: a negative or
+	// unreasonably short interval would requeue the FeedGroup in a tight
+	// reconcile loop, hammering every feed host on each pass.
 	// +default="5m"
-	// +kubebuilder:validation:Pattern=`^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:MinLength=1
 	// +optional

@@ -179,6 +179,19 @@ func TestParseDurationWithDefault(t *testing.T) {
 			t.Fatalf("expected fallback on error, got %v", got)
 		}
 	})
+
+	t.Run("tiny duration is floored", func(t *testing.T) {
+		// "1ns" (or "0s") passes the CRD's Pattern validation, but fed
+		// straight into ctrl.Result{RequeueAfter: ...} would requeue in a
+		// tight loop; parseDurationWithDefault floors it instead.
+		got, err := parseDurationWithDefault("1ns", fallback)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != minParsedInterval {
+			t.Fatalf("got %v, want floor %v", got, minParsedInterval)
+		}
+	})
 }
 
 // TestRequeueWithStatus_InvalidIntervalReturnsError asserts requeueWithStatus
