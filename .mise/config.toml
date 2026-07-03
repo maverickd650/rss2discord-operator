@@ -187,9 +187,9 @@ build-installer:
 MAKEFILE
 
 # Without --force, the plugin already leaves Chart.yaml, values.yaml,
-# _helpers.tpl, NOTES.txt, .helmignore, .github/workflows/test-chart.yml,
-# and templates/network-policy/* untouched -- confirmed empirically, not
-# just from --help text. Never pass --force: it regenerates those too,
+# _helpers.tpl, NOTES.txt, .helmignore, and templates/network-policy/*
+# untouched -- confirmed empirically, not just from --help text. Never
+# pass --force: it regenerates those too,
 # discarding the hand-tuned values.yaml/_helpers.tpl sections (prometheus,
 # prometheusRule, grafanaDashboard values; the controllerManagerName
 # helper). It also has no effect on files it doesn't recognize at all --
@@ -210,7 +210,15 @@ for f in $preserved; do
   cp "$f" "$backup_dir/$f"
 done
 
+# .github/workflows/test-chart.yml is a special case: the plugin leaves it
+# untouched *only if it already exists*. This repo deliberately deleted it
+# in commit 8ff8029 (its make-based chart testing was folded into the e2e
+# workflow, and everything CI runs must be a `mise run <task>` -- see
+# CLAUDE.md), so on a clean tree the plugin scaffolds a fresh copy of its
+# default make-based workflow as an untracked file. Remove it after every
+# run so a future refresh doesn't require noticing and deleting it by hand.
 kubebuilder edit --plugins=helm/v2-alpha
+rm -f .github/workflows/test-chart.yml
 
 echo "--- upstream drift in preserved templates (discarded below; review if kubebuilder/the plugin was upgraded) ---"
 for f in $preserved; do
