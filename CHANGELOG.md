@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.10.1...v0.11.0) (2026-07-03)
+
+
+### Features
+
+* add optional OTel tracing on outbound RSS/Discord HTTP ([#115](https://github.com/maverickd650/rss2discord-operator/issues/115)) ([2f47a64](https://github.com/maverickd650/rss2discord-operator/commit/2f47a640e6655d52cd08dc85d0c809984cdb1868))
+* **controller:** add requeue jitter and pin the priority queue ([#110](https://github.com/maverickd650/rss2discord-operator/issues/110)) ([607bb4f](https://github.com/maverickd650/rss2discord-operator/commit/607bb4f37f31917e5073c81439b3b07f4cd24c3c))
+* **controller:** migrate status writes to server-side apply ([#112](https://github.com/maverickd650/rss2discord-operator/issues/112)) ([5e21247](https://github.com/maverickd650/rss2discord-operator/commit/5e212478846f708e6c7e859991d456a04b7e6000))
+* **discord:** share a process-wide rate limiter across webhook clients ([#109](https://github.com/maverickd650/rss2discord-operator/issues/109)) ([8d8683b](https://github.com/maverickd650/rss2discord-operator/commit/8d8683be2033b0dd1e6f5cf15de98abcab974245))
+* **rss:** support RSS 1.0 (RDF) feeds and classify unrecognized formats ([#107](https://github.com/maverickd650/rss2discord-operator/issues/107)) ([71ebbef](https://github.com/maverickd650/rss2discord-operator/commit/71ebbef3dc246f60589f331af29dcf78ba853da6))
+
+
+### Bug Fixes
+
+* clean up resurrected test-chart.yml in helm-chart-refresh ([#134](https://github.com/maverickd650/rss2discord-operator/issues/134)) ([7dacbd4](https://github.com/maverickd650/rss2discord-operator/commit/7dacbd46882c3c50bc1f9a5032f70117ce481fc5))
+* **devcontainer:** install mise from a pinned release binary, not curl|sh ([#118](https://github.com/maverickd650/rss2discord-operator/issues/118)) ([cf23976](https://github.com/maverickd650/rss2discord-operator/commit/cf23976be346a9a112e439c166ee6e890de849c5))
+* sync dist/install.yaml with the current CRD ([#130](https://github.com/maverickd650/rss2discord-operator/issues/130)) ([2b1773d](https://github.com/maverickd650/rss2discord-operator/commit/2b1773dbdeeb452650a2104a170fc857ddb6d6b0))
+
 ## [0.10.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.10.0...v0.10.1) (2026-07-01)
 
 
