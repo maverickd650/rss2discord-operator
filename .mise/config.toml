@@ -210,6 +210,13 @@ done
 helm lint dist/chart
 echo "--- dist/chart diff ---"
 git diff --stat -- dist/chart dist/install.yaml
+
+# helm lint only checks syntax, not content -- the golden-file snapshots in
+# test/chart pin down the actual rendered output of the preserved templates
+# above (see test/chart/chart_test.go). After a refresh (whether it changed
+# anything or not) run `go test ./test/chart -update` with the mise-pinned
+# helm on PATH and review the golden diff -- that diff is the
+# machine-checked version of the "review the diff" step above.
 '''
 
 ##@ Deployment

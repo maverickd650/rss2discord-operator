@@ -1,0 +1,69 @@
+---
+# Source: rss2discord-operator/templates/prometheus/prometheus-rule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: chart-golden-test-rss2discord-operator-alerts
+  namespace: chart-golden-test-ns
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rss2discord-operator
+    helm.sh/chart: SCRUBBED
+    app.kubernetes.io/instance: chart-golden-test
+    control-plane: controller-manager
+spec:
+  groups:
+  - name: rss2discord-operator.feedgroups
+    rules:
+    - alert: RSS2DiscordFeedFetchErrors
+      expr: |-
+        label_replace(
+          sum by (namespace, name, rss_url, outcome) (
+            rate(rss2discord_feed_operations_total{outcome=~"fetch_error_.+"}[15m])
+          ),
+          "reason", "$1", "outcome", "fetch_error_(.+)"
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: FeedGroup {{ $labels.namespace }}/{{ $labels.name }} is failing to fetch feed {{ $labels.rss_url }}
+        description: >-
+          FeedGroup {{ $labels.namespace }}/{{ $labels.name }}
+          has had sustained RSS fetch errors on feed {{ $labels.rss_url }}
+          (reason: {{ $labels.reason }}) for at least 15m.
+          Check the feed URL, network egress, and the FeedGroup status conditions.
+    - alert: RSS2DiscordFeedRateLimited
+      expr: |-
+        sum by (namespace, name, rss_url) (
+          rate(rss2discord_feed_operations_total{outcome="rate_limited"}[15m])
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: FeedGroup {{ $labels.namespace }}/{{ $labels.name }} is being rate limited by Discord
+        description: >-
+          FeedGroup {{ $labels.namespace }}/{{ $labels.name }}
+          has been rate limited by Discord while sending feed {{ $labels.rss_url }}
+          for at least 15m.
+          Posts are being delayed; consider reducing the polling frequency or splitting the feed.
+    - alert: RSS2DiscordFeedSendErrors
+      expr: |-
+        label_replace(
+          sum by (namespace, name, rss_url, outcome) (
+            rate(rss2discord_feed_operations_total{outcome=~"send_error_.+"}[15m])
+          ),
+          "reason", "$1", "outcome", "send_error_(.+)"
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: FeedGroup {{ $labels.namespace }}/{{ $labels.name }} is failing to send feed {{ $labels.rss_url }} to Discord
+        description: >-
+          FeedGroup {{ $labels.namespace }}/{{ $labels.name }}
+          has had sustained Discord send errors on feed {{ $labels.rss_url }}
+          (reason: {{ $labels.reason }}) for at least 15m.
+          Check the webhook URL and the FeedGroup status conditions.
+

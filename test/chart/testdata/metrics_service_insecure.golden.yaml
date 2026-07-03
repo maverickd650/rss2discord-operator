@@ -1,0 +1,22 @@
+---
+# Source: rss2discord-operator/templates/metrics/controller-manager-metrics-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rss2discord-operator
+    helm.sh/chart: SCRUBBED
+    app.kubernetes.io/instance: chart-golden-test
+    control-plane: controller-manager
+  name: chart-golden-test-rss2discord-operator-metrics
+  namespace: chart-golden-test-ns
+spec:
+  ports:
+  - name: http
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    app.kubernetes.io/name: rss2discord-operator
+    control-plane: controller-manager
