@@ -68,21 +68,21 @@ corrections are load-bearing — task specs below already incorporate them:
 
 ## Task index
 
-| ID  | Title | Issue item | Priority | Wave |
-|-----|-------|-----------|----------|------|
-| T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 |
-| T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 |
-| T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 |
-| T4  | Pin the Kind node image | 2b (part) | Medium | 2 |
-| T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 |
-| T6  | promtool check/test rules in CI | 3b | Medium | 2 |
-| T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 |
-| T8  | Cache envtest binaries in CI | 5a | Medium | 1 |
-| T9  | Codecov patch status enforcing | 5b | Low — **land last** | 3 |
-| T10 | synctest / clock-extraction spike | 6a | Experimental | 2 |
-| T11 | goleak TestMain for `internal/rss` + `internal/discord` | 6b | Experimental | 1 |
-| T12 | Mutation-testing experiment (go-gremlins) | 6c | Experimental, gated | 3 |
-| T13 | ClusterFuzzLite evaluation | 1c | **Deferred** | — |
+| ID  | Title | Issue item | Priority | Wave | Status |
+|-----|-------|-----------|----------|------|--------|
+| T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | |
+| T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | |
+| T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
+| T4  | Pin the Kind node image | 2b (part) | Medium | 2 | |
+| T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | |
+| T6  | promtool check/test rules in CI | 3b | Medium | 2 | |
+| T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | |
+| T8  | Cache envtest binaries in CI | 5a | Medium | 1 | ✅ done |
+| T9  | Codecov patch status enforcing | 5b | Low — **land last** | 3 | |
+| T10 | synctest / clock-extraction spike | 6a | Experimental | 2 | |
+| T11 | goleak TestMain for `internal/rss` + `internal/discord` | 6b | Experimental | 1 | |
+| T12 | Mutation-testing experiment (go-gremlins) | 6c | Experimental, gated | 3 | |
+| T13 | ClusterFuzzLite evaluation | 1c | **Deferred** | — | |
 
 **Waves** (tasks within a wave are parallel-safe; see conflict matrix for exceptions):
 Wave 1: T1, T3, T5, T7, T8, T11 → Wave 2: T2, T4, T6, T10 → Wave 3: T12, then T9 last.
@@ -414,7 +414,7 @@ leaves goldens passing (this is the actual regression test for the refresh).
 
 **Verification:** `mise run test` · `mise run helm-chart-refresh && go test ./test/chart`.
 
-## T8 — Cache envtest binaries in CI
+## T8 — Cache envtest binaries in CI ✅ done
 
 **Why:** `mise run test` downloads the envtest control-plane binaries
 (`setup-envtest use ... --bin-dir bin`) on every Tests run; `.github/actions/setup-go-env`
