@@ -81,7 +81,7 @@ corrections are load-bearing — task specs below already incorporate them:
 | T9  | Codecov patch status enforcing | 5b | Low — **land last** | 3 | |
 | T10 | synctest / clock-extraction spike | 6a | Experimental | 2 | |
 | T11 | goleak TestMain for `internal/rss` + `internal/discord` | 6b | Experimental | 1 | |
-| T12 | Mutation-testing experiment (go-gremlins) | 6c | Experimental, gated | 3 | |
+| T12 | Mutation-testing experiment (go-gremlins) | 6c | Experimental, gated | 3 | ✅ done (phase 1) |
 | T13 | ClusterFuzzLite evaluation | 1c | **Deferred** | — | |
 
 **Waves** (tasks within a wave are parallel-safe; see conflict matrix for exceptions):
@@ -665,6 +665,30 @@ never PR-triggered → no skip-docs-checks change).
 **Verification:** `mise run mutation` completes · `mise install --locked` clean.
 
 **Conflicts:** serialize with T6 (`[tools]` + `mise.lock`).
+
+**Implementation notes (phase 1, findings posted to issue 106):**
+- `go-gremlins` v0.6.0 builds and runs cleanly on Go 1.26.4 (the abort criterion
+  "doesn't build/run on go 1.26" did not trigger). No mise registry short name
+  exists for it, so it's pinned via the `github:` backend directly
+  (`github:go-gremlins/gremlins`) rather than `ubi:...` — this mise version
+  deprecates the `ubi` backend in favor of `github`.
+- Full `./internal/...` run (excluding `zz_generated*.go`): 241 killed / 30
+  lived / 13 not covered / 1 timed out, 88.93% test efficacy, 95.42% mutator
+  coverage, ~8 minutes wall-clock (`internal/controller`'s envtest/Ginkgo
+  suite dominates the cost — every surviving mutant re-runs the full suite).
+  Full summary and per-package breakdown posted to issue 106.
+- One environment-only false start: the first run panicked
+  (`panic: error, this is temporary`) because `gremlins`' working-directory
+  dealer `filepath.Walk`-copies the *entire module root* per worker (not just
+  the target package), and choked on a permission-restricted file under a
+  local, untracked `.claude/worktrees/.../bin/k8s/.../etcd` path — a Claude
+  Code session artifact, not part of this repo's git history. Reproducing
+  from a clean `git clone` of the same branch hit none of this. Not a
+  tool/Go-version issue; won't affect CI or other contributors.
+- Phase 2 (scheduled `mutation.yml` workflow) is left for a separate PR, per
+  the plan — the phase-1 report was a clear, actionable finding (uncovered
+  branches concentrated in `classify.go`) rather than noise, so phase 2 looks
+  justified as a follow-up.
 
 ## T13 — ClusterFuzzLite evaluation — deferred
 
