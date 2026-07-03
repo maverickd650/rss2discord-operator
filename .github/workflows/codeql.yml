@@ -3,9 +3,7 @@ name: CodeQL
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md"]
   pull_request:
-    paths-ignore: ["**.md"]
   schedule:
     # Weekly scan to catch advisories published after the last code change.
     - cron: "27 4 * * 1"
