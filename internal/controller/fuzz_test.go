@@ -62,7 +62,7 @@ func FuzzControllerSanitizers(f *testing.F) {
 			if err != nil {
 				t.Fatalf("httpURLOrEmpty(%q) = %q, which does not itself parse: %v", input, got, err)
 			}
-			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
 				t.Fatalf("httpURLOrEmpty(%q) = %q, unexpected scheme %q survived", input, got, parsed.Scheme)
 			}
 		}

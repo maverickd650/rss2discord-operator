@@ -1022,6 +1022,13 @@ var trackingQueryParams = map[string]bool{
 	"spm":     true,
 }
 
+// schemeHTTP/schemeHTTPS are the only URL schemes normalizeIdentity and
+// httpURLOrEmpty treat as a URL rather than opaque text.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // normalizeIdentity normalizes id when it's an http(s) URL (an entry's ID
 // is frequently just its permalink, since the RSS/Atom parser falls back to
 // Link, then Title, when a feed has no GUID): lowercases the scheme/host,
@@ -1032,7 +1039,7 @@ var trackingQueryParams = map[string]bool{
 // arbitrary text.
 func normalizeIdentity(id string) string {
 	parsed, err := neturl.Parse(id)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || (parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS) {
 		return id
 	}
 
@@ -1169,7 +1176,7 @@ func parseHexColor(s string) int {
 // those out before they ever reach a user's client.
 func httpURLOrEmpty(rawURL string) string {
 	parsed, err := neturl.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || (parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS) {
 		return ""
 	}
 	return rawURL
