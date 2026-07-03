@@ -71,7 +71,7 @@ corrections are load-bearing — task specs below already incorporate them:
 | ID  | Title | Issue item | Priority | Wave | Status |
 |-----|-------|-----------|----------|------|--------|
 | T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | ✅ done |
-| T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | |
+| T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | ✅ done |
 | T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
 | T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
 | T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | ✅ done |
@@ -164,7 +164,7 @@ was verified directly against `internal/rss`'s existing `FuzzParseFeed` target (
 fuzzing, `FUZZTIME=5s`/`10s`, no crashes, no working-tree changes) since `mise` itself isn't
 installable in this sandbox; the workflow YAML was validated for syntax only.
 
-## T2 — Discord + controller sanitization fuzz targets, plus `b.Loop` benchmarks
+## T2 — Discord + controller sanitization fuzz targets, plus `b.Loop` benchmarks ✅ done
 
 **Why:** feed titles/descriptions/links flow straight into the Discord payload pipeline —
 the same adversarial input as the XML parser. Issue item 1b, corrected for where the code
@@ -203,6 +203,27 @@ guards) — pure helpers only. No production code changes.
 
 **Verification:** `mise run test` · `FUZZTIME=30s mise run fuzz` ·
 `go test -bench=. -run '^$' ./internal/rss ./internal/discord`.
+
+**Implementation notes — two findings from actually running the fuzzer, both handled by
+refining the test invariant rather than touching production code (per "no production code
+changes" above):**
+- `clampEmbedTotalLength` only ever trims `Description`; if `Title`+`FooterText`+`AuthorName`
+  alone already exceed `maxEmbedTotalLength` (only reachable by feeding an unrealistically
+  huge `Title` directly — real callers pre-truncate title to 256 runes via
+  `feedgroup_controller.go`, and author/footer are CRD `MaxLength`-capped, so in production
+  `Description` always has enough slack), overflow legitimately remains. `FuzzEmbedPayload`
+  asserts this exact shape (`Description` fully trimmed to empty *and* the non-description
+  total alone exceeds the cap) rather than an unconditional "always ≤ 6000".
+- Go fuzz-generated strings aren't required to be valid UTF-8 (unlike source literals).
+  Both `clampEmbedTotalLength` and `truncateMessage` return their input **unchanged** when no
+  trim is needed, bypassing the `[]rune` round-trip that would otherwise sanitize invalid
+  bytes to U+FFFD — so UTF-8 validity is only actually guaranteed on the branch that trims.
+  Both fuzz targets check validity accordingly (directly on `truncateRunes`'s output for
+  `FuzzEmbedPayload`; gated on `overflow > 0` for `FuzzControllerSanitizers`). Separately,
+  `FuzzEmbedPayload` confirms the final `json.Marshal` output always round-trips through
+  `json.Unmarshal` regardless of input filth, since `encoding/json` silently replaces invalid
+  UTF-8 with U+FFFD rather than erroring — this is the actual wire-payload guarantee that
+  matters.
 
 ## T3 — Failure-path FeedGroup e2e + fix sample apiVersion
 
