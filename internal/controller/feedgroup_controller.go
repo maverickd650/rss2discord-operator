@@ -210,12 +210,8 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Skip feeds that are in permanent-failure backoff. The skip happens
 		// here, before the fetch fan-out, so backed-off feeds emit no metrics
 		// and incur no outbound HTTP calls during their backoff window.
-		// A malformed BackoffUntil is treated as "not in backoff" so a bad
-		// value can never permanently wedge a feed without a spec change.
-		if fs := feedStatusFor(&feedGroup, feed.RSSUrl); fs != nil && fs.BackoffUntil != "" {
-			if until, err := time.Parse(time.RFC3339, fs.BackoffUntil); err == nil && reconcileNow.Before(until) {
-				continue
-			}
+		if fs := feedStatusFor(&feedGroup, feed.RSSUrl); fs != nil && feedInBackoff(fs.BackoffUntil, reconcileNow) {
+			continue
 		}
 		activeFeeds = append(activeFeeds, feed)
 	}
@@ -656,7 +652,7 @@ func (r *FeedGroupReconciler) applyPermanentBackoff(feedGroup *v1alpha1.FeedGrou
 		fs.BackoffUntil = permanentBackoffSentinel
 		r.recordPersistentFailure(feedGroup, rssURL, reason, err)
 	} else {
-		fs.BackoffUntil = time.Now().UTC().Add(backoff).Format(time.RFC3339)
+		fs.BackoffUntil = nextBackoffUntil(time.Now().UTC(), backoff)
 	}
 }
 
@@ -1432,6 +1428,27 @@ func maxRetryCount(specRetries int32) int32 {
 		return 1
 	}
 	return specRetries
+}
+
+// feedInBackoff reports whether backoffUntil (a FeedStatus.BackoffUntil
+// RFC3339 timestamp) is still in the future relative to now. A malformed or
+// empty backoffUntil is treated as "not in backoff" so a bad value can never
+// permanently wedge a feed without a spec change.
+func feedInBackoff(backoffUntil string, now time.Time) bool {
+	if backoffUntil == "" {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, backoffUntil)
+	if err != nil {
+		return false
+	}
+	return now.Before(until)
+}
+
+// nextBackoffUntil formats the RFC3339 timestamp for a feed's next permanent
+// backoff expiry, backoff duration past now.
+func nextBackoffUntil(now time.Time, backoff time.Duration) string {
+	return now.Add(backoff).Format(time.RFC3339)
 }
 
 // permanentBackoffDuration returns the exponential backoff for a permanent
