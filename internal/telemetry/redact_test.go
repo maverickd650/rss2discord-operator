@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -108,5 +109,40 @@ func TestRedactingExporter_StripsTokenFromExportedSpan(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no span carried a url.full/http.url attribute; test didn't exercise redaction")
+	}
+}
+
+// TestRedactingExporter_RedactsRegardlessOfAttributeKey guards against a
+// future otelhttp/semconv version recording the request URL under some
+// attribute key other than url.full/http.url: redaction must not depend on
+// a fixed key allowlist, only on the attribute's value looking like a
+// Discord webhook URL.
+func TestRedactingExporter_RedactsRegardlessOfAttributeKey(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(trace.WithSyncer(newRedactingExporter(exporter)))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	_, span := tp.Tracer("test").Start(context.Background(), "span")
+	span.SetAttributes(attribute.String("some.future.attribute.key",
+		"https://discord.com/api/webhooks/123456789/super-secret-token"))
+	span.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 exported span, got %d", len(spans))
+	}
+
+	found := false
+	for _, attr := range spans[0].Attributes {
+		if attr.Key != "some.future.attribute.key" {
+			continue
+		}
+		found = true
+		if v := attr.Value.AsString(); strings.Contains(v, "super-secret-token") {
+			t.Errorf("attribute %s = %q still contains the webhook token", attr.Key, v)
+		}
+	}
+	if !found {
+		t.Fatal("expected span to carry the test attribute")
 	}
 }

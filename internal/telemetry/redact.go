@@ -3,17 +3,11 @@ package telemetry
 import (
 	"context"
 	"net/url"
-	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
-
-// urlAttributeKeys are the span attribute keys otelhttp may record the
-// request URL under (the current stable semantic convention, plus the older
-// one, in case a dependency bump changes which otelhttp emits).
-var urlAttributeKeys = []attribute.Key{"url.full", "http.url"}
 
 // redactingExporter wraps a delegate SpanExporter and strips the Discord
 // webhook token from any recorded request-URL span attribute before spans
@@ -53,7 +47,13 @@ func (s redactedSpan) Attributes() []attribute.KeyValue {
 	out := make([]attribute.KeyValue, len(attrs))
 	copy(out, attrs)
 	for i, attr := range out {
-		if !slices.Contains(urlAttributeKeys, attr.Key) {
+		// Don't gate on a fixed set of attribute keys (e.g. "url.full") --
+		// a future otelhttp/semconv version could start recording the
+		// request URL under a different key, and a key-based allowlist
+		// would silently stop redacting it. Instead, inspect every
+		// string-valued attribute: redactWebhookURL is a safe no-op on
+		// anything that isn't a Discord webhook URL.
+		if attr.Value.Type() != attribute.STRING {
 			continue
 		}
 		if redacted, changed := redactWebhookURL(attr.Value.AsString()); changed {
