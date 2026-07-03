@@ -108,18 +108,29 @@ type Client struct {
 
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = newDefaultHTTPClient()
+		httpClient = newDefaultHTTPClient(nil)
 	}
 
 	return &Client{httpClient: httpClient}
+}
+
+// NewClientWithTransportWrap is like NewClient(nil), but passes the
+// SSRF-guarded transport through wrap (e.g. otelhttp.NewTransport) before
+// use. wrap wraps around the guarded transport, never replaces it, so the
+// non-public-IP rejection in newDefaultHTTPClient still applies to every
+// request. A nil wrap behaves exactly like NewClient(nil).
+func NewClientWithTransportWrap(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	return &Client{httpClient: newDefaultHTTPClient(wrap)}
 }
 
 // newDefaultHTTPClient returns a client with an explicit timeout and a
 // DialContext that rejects connections to loopback, link-local, private, and
 // other non-public IP ranges. Feed URLs are supplied by namespace users via
 // the FeedGroup CRD, so without this guard the controller can be used as an
-// SSRF proxy into the cluster network or cloud metadata endpoints.
-func newDefaultHTTPClient() *http.Client {
+// SSRF proxy into the cluster network or cloud metadata endpoints. If wrap is
+// non-nil, it wraps the guarded transport (e.g. to add tracing) without
+// replacing it.
+func newDefaultHTTPClient(wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -141,9 +152,14 @@ func newDefaultHTTPClient() *http.Client {
 		ResponseHeaderTimeout: defaultTimeout,
 	}
 
+	var rt http.RoundTripper = transport
+	if wrap != nil {
+		rt = wrap(rt)
+	}
+
 	return &http.Client{
 		Timeout:   defaultTimeout,
-		Transport: transport,
+		Transport: rt,
 	}
 }
 

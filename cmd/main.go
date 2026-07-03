@@ -17,8 +17,10 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"net/http"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -33,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -40,6 +43,7 @@ import (
 	"github.com/maverickd650/rss2discord-operator/internal/controller"
 	"github.com/maverickd650/rss2discord-operator/internal/discord"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
+	"github.com/maverickd650/rss2discord-operator/internal/telemetry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -114,6 +118,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var maxConcurrentFeedGroupReconciles int
+	var otlpEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -131,6 +136,9 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics server")
 	flag.IntVar(&maxConcurrentFeedGroupReconciles, "max-concurrent-feedgroup-reconciles", 1,
 		"The maximum number of FeedGroups the controller will reconcile concurrently.")
+	flag.StringVar(&otlpEndpoint, "otlp-endpoint", "",
+		"OTLP/gRPC endpoint (host:port) to export traces to for outbound RSS fetch and Discord webhook "+
+			"requests. Leave empty to disable tracing entirely.")
 	// Development defaults to false so production deployments get
 	// structured JSON logs at info level rather than zap's human-oriented
 	// console encoder with debug-level and stack-traced warnings. Pass
@@ -191,6 +199,21 @@ func main() {
 	})
 	exitOnError(err, "Failed to start manager")
 
+	// Tracing is opt-in: with no --otlp-endpoint, transportWrap stays nil and
+	// rss.NewClientWithTransportWrap / discord.NewHTTPClientWithTransportWrap
+	// behave exactly like the unwrapped constructors they replace.
+	var transportWrap func(http.RoundTripper) http.RoundTripper
+	if otlpEndpoint != "" {
+		tp, shutdown, err := telemetry.Setup(context.Background(), otlpEndpoint)
+		exitOnError(err, "Failed to set up tracing", "otlp-endpoint", otlpEndpoint)
+		transportWrap = telemetry.HTTPTransportWrap(tp)
+
+		exitOnError(mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			<-ctx.Done()
+			return shutdown(context.Background())
+		})), "Failed to register tracer shutdown")
+	}
+
 	// RSSClient, the Discord HTTP client, and the Discord rate limiter are
 	// constructed once here and shared across every reconcile, rather than
 	// per-reconcile: the HTTP client so keep-alive connections to
@@ -200,8 +223,8 @@ func main() {
 	// the same webhook (or racing it once
 	// --max-concurrent-feedgroup-reconciles > 1) instead of each discovering
 	// the limit independently.
-	rssClient := rss.NewClient(nil)
-	discordHTTPClient := discord.NewHTTPClient()
+	rssClient := rss.NewClientWithTransportWrap(transportWrap)
+	discordHTTPClient := discord.NewHTTPClientWithTransportWrap(transportWrap)
 	discordRateLimiter := discord.NewRateLimiter()
 
 	err = (&controller.FeedGroupReconciler{

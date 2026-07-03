@@ -333,6 +333,37 @@ func TestDefaultClient_RejectsLoopbackTarget(t *testing.T) {
 	}
 }
 
+func TestNewClientWithTransportWrap_WrapsWithoutBypassingGuard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(sampleRSS))
+	}))
+	defer srv.Close()
+
+	var wrapped bool
+	wrap := func(rt http.RoundTripper) http.RoundTripper {
+		wrapped = true
+		return rt
+	}
+
+	// The wrap must be applied around the guarded transport, not instead of
+	// it: a request to a loopback test server must still be rejected.
+	c := NewClientWithTransportWrap(wrap)
+	if !wrapped {
+		t.Fatal("expected wrap to be invoked when building the default client")
+	}
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
+	if err == nil {
+		t.Fatal("expected error connecting to loopback address, got nil")
+	}
+}
+
+func TestNewClientWithTransportWrap_NilWrapMatchesNewClient(t *testing.T) {
+	c := NewClientWithTransportWrap(nil)
+	if c.httpClient == nil {
+		t.Fatal("expected a non-nil default http client")
+	}
+}
+
 func TestIsPublicIP(t *testing.T) {
 	cases := []struct {
 		ip     string
