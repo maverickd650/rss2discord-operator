@@ -5,7 +5,9 @@ coverage:
         informational: true
     patch:
       default:
-        informational: true
+        informational: false
+        target: 80%
+        threshold: 5%
 
 comment:
   require_changes: true
