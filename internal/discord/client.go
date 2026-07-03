@@ -27,8 +27,9 @@ var AllowedWebhookHosts = map[string]bool{
 }
 
 type Client struct {
-	webhookURL string
-	httpClient *http.Client
+	webhookURL  string
+	httpClient  *http.Client
+	rateLimiter *RateLimiter
 }
 
 func NewClient(webhookURL string) *Client {
@@ -36,10 +37,19 @@ func NewClient(webhookURL string) *Client {
 }
 
 func NewClientWithHTTP(webhookURL string, httpClient *http.Client) *Client {
+	return NewClientWithLimiter(webhookURL, httpClient, nil)
+}
+
+// NewClientWithLimiter is like NewClientWithHTTP, but also wires in a shared
+// RateLimiter: a 429 seen on webhookURL by any Client built with the same
+// limiter puts every one of them into cooldown, not just this one. Passing a
+// nil limiter disables that cross-Client behavior (equivalent to
+// NewClientWithHTTP).
+func NewClientWithLimiter(webhookURL string, httpClient *http.Client, limiter *RateLimiter) *Client {
 	if httpClient == nil {
 		httpClient = NewHTTPClient()
 	}
-	return &Client{webhookURL: strings.TrimSpace(webhookURL), httpClient: httpClient}
+	return &Client{webhookURL: strings.TrimSpace(webhookURL), httpClient: httpClient, rateLimiter: limiter}
 }
 
 // NewHTTPClient returns the default HTTP client used for webhook delivery.
@@ -198,6 +208,12 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 		parsedURL.RawQuery = query.Encode()
 	}
 
+	if c.rateLimiter != nil {
+		if remaining, cooling := c.rateLimiter.reserve(c.webhookURL); cooling {
+			return &RateLimitError{RetryAfter: remaining}
+		}
+	}
+
 	payload := discordPayload{
 		Content:         msg.Content,
 		ThreadName:      msg.ThreadName,
@@ -237,7 +253,11 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return &RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+		if c.rateLimiter != nil {
+			c.rateLimiter.cooldown(c.webhookURL, retryAfter)
+		}
+		return &RateLimitError{RetryAfter: retryAfter}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
