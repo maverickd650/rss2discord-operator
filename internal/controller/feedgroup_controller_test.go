@@ -2594,9 +2594,11 @@ var _ = Describe("FeedGroup Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should use normal interval (1 hour)
+			// Should use normal interval (1 hour), plus up to 10% jitter so
+			// FeedGroups sharing an interval don't requeue in lockstep.
 			expectedInterval := time.Hour
-			Expect(result.RequeueAfter).To(Equal(expectedInterval))
+			Expect(result.RequeueAfter).To(BeNumerically(">=", expectedInterval))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", time.Duration(1.1*float64(expectedInterval))))
 		})
 	})
 
@@ -2787,7 +2789,9 @@ var _ = Describe("FeedGroup Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(discordServer.MessageCount()).To(Equal(1))
-			Expect(result.RequeueAfter).To(Equal(30 * time.Minute))
+			// Normal interval, plus up to 10% jitter.
+			Expect(result.RequeueAfter).To(BeNumerically(">=", 30*time.Minute))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", 33*time.Minute))
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(feedStatusFor(updated, rssServer.URL()).ETag).To(Equal(`"v1"`))
@@ -3074,7 +3078,9 @@ var _ = Describe("FeedGroup Controller", func() {
 				NamespacedName: types.NamespacedName{Name: feedGroupName, Namespace: namespace},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(30 * time.Minute))
+			// Normal interval, plus up to 10% jitter.
+			Expect(result.RequeueAfter).To(BeNumerically(">=", 30*time.Minute))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", 33*time.Minute))
 
 			By("Verifying every feed was fetched and its entry delivered, despite exceeding the concurrency limit")
 			Expect(discordServer.MessageCount()).To(Equal(numFeeds))

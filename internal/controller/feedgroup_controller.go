@@ -42,7 +42,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -177,13 +179,13 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	webhookURL, err := r.resolveWebhookURL(ctx, &feedGroup)
 	if err != nil {
 		log.Error(err, "failed to resolve Discord webhook URL")
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err, true)
 	}
 
 	if webhookURL == "" {
 		err = fmt.Errorf("discord webhook URL is empty")
 		log.Error(err, "invalid webhook secret")
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, feedGroup.Spec.RetryInterval, 5*time.Minute, err, true)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -266,7 +268,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if discordRetryAfter > 0 {
-		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, "", discordRetryAfter, nil)
+		return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, "", discordRetryAfter, nil, false)
 	}
 
 	interval := feedGroup.Spec.Interval
@@ -276,7 +278,7 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		fallback = 5 * time.Minute
 	}
 
-	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback, nil)
+	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback, nil, true)
 }
 
 // processFeed fetches/filters/sends entries for a single feed and updates
@@ -773,6 +775,14 @@ func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.Co
 	})
 }
 
+// requeueJitterMaxFactor bounds the jitter added to a periodic (interval or
+// retry-interval driven) requeue: up to 10% longer than the base duration,
+// per wait.Jitter's contract. Without this, FeedGroups created together with
+// the same interval requeue in lockstep forever -- every one of their
+// fetches (and, for FeedGroups sharing a webhook, every Discord send) lands
+// in the same instant, indefinitely.
+const requeueJitterMaxFactor = 0.1
+
 // requeueWithStatus persists feedGroup's status and requeues after the given
 // interval (falling back to fallback if interval is unset or invalid). The
 // Status().Update call is skipped when the status hasn't actually changed
@@ -782,11 +792,18 @@ func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.Co
 // process any feed (the webhook Secret couldn't be resolved); it takes over
 // the Ready condition unconditionally, since per-feed status is stale/empty
 // and would otherwise misreport as healthy.
-func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, original *v1alpha1.FeedGroupStatus, interval string, fallback time.Duration, webhookErr error) (ctrl.Result, error) {
+//
+// jitter controls whether requeueJitterMaxFactor is applied to the computed
+// duration. It must be false when fallback is itself an externally-dictated
+// wait -- currently only Discord's rate-limit Retry-After -- since that
+// duration is already the exact minimum wait Discord demands, not a
+// self-chosen periodicity that benefits from desynchronization.
+func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup, original *v1alpha1.FeedGroupStatus, interval string, fallback time.Duration, webhookErr error, jitter bool) (ctrl.Result, error) {
 	duration, err := parseDurationWithDefault(interval, fallback)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	duration = jitterDuration(duration, jitter)
 
 	feedGroup.Status.ObservedGeneration = feedGroup.Generation
 	setReadyCondition(feedGroup, webhookErr)
@@ -801,6 +818,17 @@ func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *
 	}
 
 	return ctrl.Result{RequeueAfter: duration}, nil
+}
+
+// jitterDuration adds up to requeueJitterMaxFactor extra to duration when
+// enabled is true, and returns duration unchanged otherwise. Split out from
+// requeueWithStatus so it can be unit-tested without a real client.Client
+// (requeueWithStatus's Status().Update path needs one).
+func jitterDuration(duration time.Duration, enabled bool) time.Duration {
+	if !enabled {
+		return duration
+	}
+	return wait.Jitter(duration, requeueJitterMaxFactor)
 }
 
 // setReadyCondition summarizes the outcome of a reconciliation into a single
@@ -1384,6 +1412,16 @@ func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.FeedGroup{}).
 		Named("feedgroup").
-		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: r.MaxConcurrentReconciles,
+			// controller-runtime v0.24 already defaults UsePriorityQueue to
+			// true, but the queue is dominated by periodic RequeueAfter
+			// items (every FeedGroup's interval/retry-interval), so pinning
+			// this explicitly documents that fresh spec-change events are
+			// meant to jump ahead of that backlog rather than wait behind
+			// hundreds of routine retries -- and keeps that guarantee if the
+			// upstream default ever changes.
+			UsePriorityQueue: ptr.To(true),
+		}).
 		Complete(r)
 }

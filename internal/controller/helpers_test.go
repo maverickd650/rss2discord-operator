@@ -204,12 +204,35 @@ func TestRequeueWithStatus_InvalidIntervalReturnsError(t *testing.T) {
 	original := feedGroup.Status.DeepCopy()
 
 	r := &FeedGroupReconciler{}
-	result, err := r.requeueWithStatus(context.Background(), feedGroup, original, "99999999999999999999h", time.Minute, nil)
+	result, err := r.requeueWithStatus(context.Background(), feedGroup, original, "99999999999999999999h", time.Minute, nil, true)
 	if err == nil {
 		t.Fatal("expected error for an invalid interval, got nil")
 	}
 	if result != (ctrl.Result{}) {
 		t.Fatalf("expected zero-value Result on error, got %+v", result)
+	}
+}
+
+// TestJitterDuration asserts enabled=true adds up to requeueJitterMaxFactor
+// extra to the duration (so FeedGroups created together with the same
+// interval don't requeue in lockstep forever), while enabled=false -- used
+// for Discord's rate-limit Retry-After, an externally-dictated minimum wait
+// -- leaves it exact.
+func TestJitterDuration(t *testing.T) {
+	const base = 10 * time.Minute
+
+	if got := jitterDuration(base, false); got != base {
+		t.Fatalf("expected exact %v with jitter disabled, got %v", base, got)
+	}
+
+	for range 20 {
+		got := jitterDuration(base, true)
+		if got < base {
+			t.Fatalf("jittered duration %v must never be shorter than base %v", got, base)
+		}
+		if max := time.Duration(1.1 * float64(base)); got > max {
+			t.Fatalf("jittered duration %v exceeds %v (base + %.0f%%)", got, max, requeueJitterMaxFactor*100)
+		}
 	}
 }
 
