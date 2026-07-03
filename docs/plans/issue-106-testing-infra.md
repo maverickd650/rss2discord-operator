@@ -74,7 +74,7 @@ corrections are load-bearing — task specs below already incorporate them:
 | T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | |
 | T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
 | T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
-| T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | |
+| T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | ✅ done |
 | T6  | promtool check/test rules in CI | 3b | Medium | 2 | |
 | T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | |
 | T8  | Cache envtest binaries in CI | 5a | Medium | 1 | ✅ done |
@@ -280,7 +280,7 @@ which requires branch-protection changes **and** matching duplicate job names in
 
 **Verification:** `mise run test-e2e`.
 
-## T5 — Observability contract test
+## T5 — Observability contract test ✅ done
 
 **Why:** CLAUDE.md documents a strict contract — every outcome label emitted by
 `internal/controller` must be matched by the anchored regexes in the Grafana dashboard
@@ -334,6 +334,24 @@ dashboard JSON locally makes it fail; adding a dummy `failureClass{...}` literal
 **Verification:** `mise run test` ·
 `go test ./internal/controller/ -run TestObservabilityContract -v` (after
 `mise run manifests generate`).
+
+**Implementation notes (deviations from the steps above, both intentional):**
+- Renders each template individually via `helm template -s <file> --set <its .enabled>=true`
+  (two invocations: the dashboard ConfigMap, the PrometheusRule) rather than one combined
+  render with all three flags set — simpler to attribute a matcher to its source document,
+  and `prometheus.enabled` (the ServiceMonitor) doesn't affect either file so it's omitted.
+- The coverage cross-checks (both directions) test whether a matcher's pattern *names* an
+  outcome (`outcomeMatcher.namesOutcome`, anchored-regex-or-literal-equality against the
+  pattern text) rather than simulating true Prometheus series-selection semantics. This
+  matters for exactly one case: the dashboard's only reference to `rate_limited` is the
+  send-ratio panel's negative matcher `outcome!~"rate_limited"`. Under real negated-selection
+  semantics that matcher *excludes* `rate_limited`, which would make the "every expected
+  outcome matches ≥1 dashboard matcher" check wrongly flag a documented, intentional
+  exception as a gap. Naming semantics treat that matcher as evidence the dashboard accounts
+  for `rate_limited` (its author had to name it to carve it out) — verified against the
+  actual rendered chart content, all 25 expected outcomes and all 6 distinct matchers
+  cross-check cleanly both ways under this definition. The dead-regex check still excludes
+  `!~` matchers, as originally specified.
 
 ## T6 — promtool rule checks in CI
 
