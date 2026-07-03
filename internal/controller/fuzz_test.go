@@ -1,0 +1,88 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	neturl "net/url"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+// FuzzControllerSanitizers exercises the two pure text-sanitizing helpers
+// feed entry content passes through before becoming a Discord message:
+// httpURLOrEmpty (strips any non-http(s) scheme -- javascript:/data: URIs
+// included) and truncateMessage (Discord's message length clamp). Neither
+// touches the network or the SSRF/webhook-host guards in internal/rss or
+// internal/discord (see CLAUDE.md) -- this fuzz target is deliberately
+// scoped to the pure helpers only, per ground rule 1 in
+// docs/plans/issue-106-testing-infra.md.
+func FuzzControllerSanitizers(f *testing.F) {
+	seeds := []string{
+		"",
+		"https://example.com/feed",
+		"http://example.com",
+		"javascript:alert(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"ftp://example.com",
+		"not a url",
+		"@everyone",
+		"@here",
+		"\x00\x00\x00",
+		"\xff\xfe\x80", // invalid UTF-8 byte sequence
+		strings.Repeat("x", maxDiscordMessageLength*2),
+		strings.Repeat("\U0001F600", maxDiscordMessageLength), // 4-byte emoji straddling the clamp boundary
+		"é́́",    // base char with combining acute accents
+		"日本語テスト", // multibyte (Japanese) text
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		if got := httpURLOrEmpty(input); got != "" {
+			if got != input {
+				t.Fatalf("httpURLOrEmpty(%q) = %q, want either %q unchanged or empty", input, got, input)
+			}
+			parsed, err := neturl.Parse(got)
+			if err != nil {
+				t.Fatalf("httpURLOrEmpty(%q) = %q, which does not itself parse: %v", input, got, err)
+			}
+			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+				t.Fatalf("httpURLOrEmpty(%q) = %q, unexpected scheme %q survived", input, got, parsed.Scheme)
+			}
+		}
+
+		truncated, overflow := truncateMessage(input, maxDiscordMessageLength)
+		if got := len([]rune(truncated)); got > maxDiscordMessageLength {
+			t.Fatalf("truncateMessage(%q, %d) returned %d runes, want <= %d", input, maxDiscordMessageLength, got, maxDiscordMessageLength)
+		}
+		wantOverflow := max(len([]rune(input))-maxDiscordMessageLength, 0)
+		if overflow != wantOverflow {
+			t.Fatalf("truncateMessage(%q, %d) overflow = %d, want %d", input, maxDiscordMessageLength, overflow, wantOverflow)
+		}
+		// Like clampEmbedTotalLength in internal/discord, truncateMessage
+		// passes its input through unchanged when no truncation is needed
+		// (overflow == 0) rather than round-tripping it through []rune, so
+		// UTF-8 validity is only guaranteed for the branch that actually
+		// truncates (fuzz-generated strings, unlike literals, aren't
+		// required to be valid UTF-8 to begin with).
+		if overflow > 0 && !utf8.ValidString(truncated) {
+			t.Fatalf("truncateMessage(%q, %d) produced invalid UTF-8: %q", input, maxDiscordMessageLength, truncated)
+		}
+	})
+}
