@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,8 @@ var allFailureClasses = []failureClass{
 // be incremented with in production -- the "reality" side of the contract
 // that the dashboard and alerts in dist/chart are checked against.
 func expectedOutcomes() []string {
-	outcomes := []string{outcomeSent, outcomeRenderError, outcomeRateLimited}
+	outcomes := make([]string, 0, 3+2*len(allFailureClasses))
+	outcomes = append(outcomes, outcomeSent, outcomeRenderError, outcomeRateLimited)
 	for _, class := range allFailureClasses {
 		outcomes = append(outcomes, fetchErrorOutcome(class), sendErrorOutcome(class))
 	}
@@ -197,12 +199,7 @@ func TestObservabilityContract(t *testing.T) {
 
 // anyOutcomeNamedBy reports whether m names any outcome in outcomes.
 func anyOutcomeNamedBy(m outcomeMatcher, outcomes []string) bool {
-	for _, outcome := range outcomes {
-		if m.namesOutcome(outcome) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(outcomes, m.namesOutcome)
 }
 
 // TestFailureClassExhaustiveness reads classify.go's source so a new
