@@ -19,6 +19,7 @@ func FuzzParseFeed(f *testing.F) {
 		`<`,
 		`<rss>`,
 		`<a xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>X</dc:creator></a>`,
+		`<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>C</title></channel><item><title>T</title><link>http://example.com</link><dc:creator>A</dc:creator><dc:date>2015-10-21T07:28:00Z</dc:date></item></rdf:RDF>`,
 	}
 	for _, seed := range seeds {
 		f.Add([]byte(seed))

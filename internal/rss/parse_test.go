@@ -1,6 +1,7 @@
 package rss
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -464,14 +465,61 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
-func TestParseFeed_UnknownRootFallsBackToAtom(t *testing.T) {
-	// Root element is neither <rss> nor <feed>; parseRSS yields no items
-	// without error, so an Atom-shaped document under an odd root still
-	// parses via the fallback path.
+func TestParseFeed_UnknownRootReturnsUnrecognizedFormatError(t *testing.T) {
+	// Root element is none of rss/feed/RDF; this must surface as a distinct,
+	// permanent error rather than silently falling through to Atom (which
+	// would "succeed" with zero entries and no error).
 	data := []byte(`<?xml version="1.0"?>
 <feedwrapper><entry><id>1</id><title>X</title></entry></feedwrapper>`)
-	if _, err := parseFeed(data); err != nil {
+	_, err := parseFeed(data)
+	if err == nil {
+		t.Fatal("expected an error for an unrecognized root element")
+	}
+	var unrecognized *UnrecognizedFormatError
+	if !errors.As(err, &unrecognized) {
+		t.Fatalf("expected *UnrecognizedFormatError, got %T: %v", err, err)
+	}
+	if unrecognized.Root != "feedwrapper" {
+		t.Fatalf("expected Root %q, got %q", "feedwrapper", unrecognized.Root)
+	}
+}
+
+func TestParseFeed_RDF(t *testing.T) {
+	// RSS 1.0 (RDF): root <rdf:RDF>, <item> elements are top-level siblings
+	// of <channel> rather than nested inside it, and items use <dc:date>
+	// instead of <pubDate>.
+	data := []byte(`<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel><title>Example</title></channel>
+<item>
+  <title>RDF Item</title>
+  <link>http://example.com/rdf-item</link>
+  <description>An RDF item</description>
+  <dc:creator>Jane Doe</dc:creator>
+  <dc:date>2015-10-21T07:28:00Z</dc:date>
+</item>
+</rdf:RDF>`)
+
+	entries, err := parseFeed(data)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Title != "RDF Item" || e.Link != "http://example.com/rdf-item" || e.Description != "An RDF item" {
+		t.Fatalf("unexpected entry: %+v", e)
+	}
+	if e.Author != "Jane Doe" {
+		t.Fatalf("expected dc:creator used as author, got %q", e.Author)
+	}
+	if e.Published.IsZero() {
+		t.Fatal("expected published derived from dc:date")
+	}
+	if e.ID != "http://example.com/rdf-item" {
+		t.Fatalf("expected link used as ID (no guid), got %q", e.ID)
 	}
 }
 

@@ -54,16 +54,17 @@ type failureClass struct {
 // against the same constants instead of duplicating the literals, which
 // would otherwise also trip goconst.
 const (
-	reasonHTTP404        = "HTTP404"
-	reasonHTTP410        = "HTTP410"
-	reasonRateLimited    = "RateLimited"
-	reasonServerError    = "ServerError"
-	reasonClientError    = "ClientError"
-	reasonTimeout        = "Timeout"
-	reasonDNSFailure     = "DNSFailure"
-	reasonParseError     = "ParseError"
-	reasonWebhookInvalid = "WebhookInvalid"
-	reasonOther          = "Other"
+	reasonHTTP404            = "HTTP404"
+	reasonHTTP410            = "HTTP410"
+	reasonRateLimited        = "RateLimited"
+	reasonServerError        = "ServerError"
+	reasonClientError        = "ClientError"
+	reasonTimeout            = "Timeout"
+	reasonDNSFailure         = "DNSFailure"
+	reasonParseError         = "ParseError"
+	reasonUnrecognizedFormat = "UnrecognizedFormat"
+	reasonWebhookInvalid     = "WebhookInvalid"
+	reasonOther              = "Other"
 
 	// reasonConfigError and reasonRenderError are FeedConditionTypeDelivered
 	// reasons for failures that have no HTTP status to classify: a
@@ -72,29 +73,31 @@ const (
 	reasonConfigError = "ConfigError"
 	reasonRenderError = "RenderError"
 
-	metricNotFound       = "not_found"
-	metricGone           = "gone"
-	metricRateLimited    = "rate_limited"
-	metricServerError    = "server_error"
-	metricClientError    = "client_error"
-	metricTimeout        = "timeout"
-	metricDNSFailure     = "dns_failure"
-	metricParseError     = "parse_error"
-	metricWebhookInvalid = "webhook_invalid"
-	metricOther          = "other"
+	metricNotFound           = "not_found"
+	metricGone               = "gone"
+	metricRateLimited        = "rate_limited"
+	metricServerError        = "server_error"
+	metricClientError        = "client_error"
+	metricTimeout            = "timeout"
+	metricDNSFailure         = "dns_failure"
+	metricParseError         = "parse_error"
+	metricUnrecognizedFormat = "unrecognized_format"
+	metricWebhookInvalid     = "webhook_invalid"
+	metricOther              = "other"
 )
 
 var (
-	classNotFound       = failureClass{metricNotFound, reasonHTTP404, true}
-	classGone           = failureClass{metricGone, reasonHTTP410, true}
-	classRateLimited    = failureClass{metricRateLimited, reasonRateLimited, false}
-	classServerError    = failureClass{metricServerError, reasonServerError, false}
-	classClientError    = failureClass{metricClientError, reasonClientError, true}
-	classTimeout        = failureClass{metricTimeout, reasonTimeout, false}
-	classDNSFailure     = failureClass{metricDNSFailure, reasonDNSFailure, false}
-	classParseError     = failureClass{metricParseError, reasonParseError, true}
-	classWebhookInvalid = failureClass{metricWebhookInvalid, reasonWebhookInvalid, true}
-	classOther          = failureClass{metricOther, reasonOther, false}
+	classNotFound           = failureClass{metricNotFound, reasonHTTP404, true}
+	classGone               = failureClass{metricGone, reasonHTTP410, true}
+	classRateLimited        = failureClass{metricRateLimited, reasonRateLimited, false}
+	classServerError        = failureClass{metricServerError, reasonServerError, false}
+	classClientError        = failureClass{metricClientError, reasonClientError, true}
+	classTimeout            = failureClass{metricTimeout, reasonTimeout, false}
+	classDNSFailure         = failureClass{metricDNSFailure, reasonDNSFailure, false}
+	classParseError         = failureClass{metricParseError, reasonParseError, true}
+	classUnrecognizedFormat = failureClass{metricUnrecognizedFormat, reasonUnrecognizedFormat, true}
+	classWebhookInvalid     = failureClass{metricWebhookInvalid, reasonWebhookInvalid, true}
+	classOther              = failureClass{metricOther, reasonOther, false}
 )
 
 // classifyFetchError maps an error returned by rss.Client.FetchEntries to the
@@ -112,6 +115,10 @@ func classifyFetchError(err error) failureClass {
 
 	if _, ok := errors.AsType[*xml.SyntaxError](err); ok {
 		return classParseError
+	}
+
+	if _, ok := errors.AsType[*rss.UnrecognizedFormatError](err); ok {
+		return classUnrecognizedFormat
 	}
 
 	return classOther

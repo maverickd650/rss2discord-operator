@@ -69,6 +69,19 @@ func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("feed fetch failed: %s: %s", e.Status, e.Body)
 }
 
+// UnrecognizedFormatError is returned by parseFeed when the document's root
+// element is none of the feed formats it understands (rss, feed, RDF). It's
+// a distinct, permanent classification rather than a silent fall-through, so
+// a feed in a format this parser doesn't support surfaces as a status
+// condition instead of quietly posting zero entries forever.
+type UnrecognizedFormatError struct {
+	Root string
+}
+
+func (e *UnrecognizedFormatError) Error() string {
+	return fmt.Sprintf("unrecognized feed format: root element <%s>", e.Root)
+}
+
 // CacheValidators carries the conditional-GET validators returned by a
 // previous fetch of a feed, so a later fetch can ask the server "has this
 // changed since I last asked" instead of always re-downloading and
@@ -282,6 +295,17 @@ type rssChannel struct {
 	Items []rssItem `xml:"item"`
 }
 
+// rdfEnvelope is RSS 1.0's document shape: root <rdf:RDF>, with <item>
+// elements listed as top-level siblings of <channel> rather than nested
+// inside it (unlike RSS 2.0's rssChannel.Items). Items reuse the rssItem
+// mapping -- RDF's title/link/description/dc:creator/dc:date fields are the
+// same local names RSS 2.0 uses (dc:creator and dc:date match rssItem's
+// Creator and DCDate regardless of namespace prefix).
+type rdfEnvelope struct {
+	XMLName xml.Name  `xml:"RDF"`
+	Items   []rssItem `xml:"item"`
+}
+
 type rssItem struct {
 	Title       string `xml:"title"`
 	Link        string `xml:"link"`
@@ -298,6 +322,12 @@ type rssItem struct {
 	Enclosure      *rssEnclosure `xml:"enclosure"`
 	MediaThumbnail *rssMediaURL  `xml:"thumbnail"`
 	MediaContent   []rssMediaURL `xml:"content"`
+	// DCDate matches Dublin Core's <dc:date>, RDF's (RSS 1.0) date field --
+	// RDF items carry no <pubDate>. encoding/xml matches by local name
+	// regardless of namespace prefix, so this also covers <date> without a
+	// dc: prefix. Value is W3CDTF, a profile of RFC3339 that parseTime
+	// already handles.
+	DCDate string `xml:"date"`
 }
 
 // rssEnclosure is RSS's standard <enclosure url=".." type="image/..">,
@@ -481,11 +511,10 @@ func parseFeed(data []byte) ([]Entry, error) {
 		return parseRSS(data)
 	case "feed":
 		return parseAtom(data)
+	case "rdf":
+		return parseRDF(data)
 	default:
-		// rssEnvelope's XMLName is pinned to "rss", so parseRSS always fails
-		// on a root name that reached this branch; fall straight to Atom,
-		// which has no such root-name constraint.
-		return parseAtom(data)
+		return nil, &UnrecognizedFormatError{Root: root}
 	}
 }
 
@@ -495,9 +524,32 @@ func parseRSS(data []byte) ([]Entry, error) {
 		return nil, err
 	}
 
-	entries := make([]Entry, 0, len(envelope.Channel.Items))
-	for i, item := range envelope.Channel.Items {
+	return rssItemsToEntries(envelope.Channel.Items), nil
+}
+
+// parseRDF parses an RSS 1.0 (RDF) document. Unlike RSS 2.0, its <item>
+// elements are top-level siblings of <channel> rather than nested inside it,
+// so it needs its own envelope, but shares rssItem's field mapping and
+// rssItemsToEntries' entry construction.
+func parseRDF(data []byte) ([]Entry, error) {
+	var envelope rdfEnvelope
+	if err := unmarshalXML(data, &envelope); err != nil {
+		return nil, err
+	}
+
+	return rssItemsToEntries(envelope.Items), nil
+}
+
+func rssItemsToEntries(items []rssItem) []Entry {
+	entries := make([]Entry, 0, len(items))
+	for i, item := range items {
 		published, _ := parseTime(item.PubDate)
+		if published.IsZero() {
+			// RDF (RSS 1.0) items carry no <pubDate>; dc:date is their date
+			// field instead.
+			published, _ = parseTime(item.DCDate)
+		}
+
 		id := strings.TrimSpace(item.GUID)
 		if id == "" {
 			id = strings.TrimSpace(item.Link)
@@ -524,7 +576,7 @@ func parseRSS(data []byte) ([]Entry, error) {
 		})
 	}
 
-	return entries, nil
+	return entries
 }
 
 func parseAtom(data []byte) ([]Entry, error) {

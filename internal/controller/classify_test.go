@@ -56,6 +56,7 @@ func TestClassifyFetchError(t *testing.T) {
 		{reasonTimeout, fmt.Errorf("fetch: %w", timeoutError{}), classTimeout},
 		{reasonDNSFailure, fmt.Errorf("fetch: %w", &net.DNSError{Err: "no such host", Name: "example.invalid"}), classDNSFailure},
 		{reasonParseError, fmt.Errorf("parse: %w", &xml.SyntaxError{Msg: "unexpected EOF"}), classParseError},
+		{reasonUnrecognizedFormat, fmt.Errorf("parse: %w", &rss.UnrecognizedFormatError{Root: "rdf"}), classUnrecognizedFormat},
 		{reasonOther, errors.New("boom"), classOther},
 	}
 
