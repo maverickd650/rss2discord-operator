@@ -1,0 +1,71 @@
+name: Fuzz
+
+# Deliberately schedule/workflow_dispatch only, no push/pull_request trigger:
+# fuzzing runs for minutes per target and isn't something a PR should block
+# on, so this workflow adds zero PR-triggered job names and needs no
+# corresponding entry in skip-docs-checks.yml.
+on:
+  schedule:
+    # Weekly, offset from the other weekly crons in this repo: govulncheck
+    # (13 4), codeql (27 4), scorecard (37 4).
+    - cron: "43 4 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
+
+      - name: Determine Go build cache directory
+        id: gocache
+        run: echo "dir=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+      # Cumulative corpus across runs: cache keys are immutable, so a
+      # run_id-suffixed key plus a shared restore-keys prefix approximates an
+      # append-only cache. Restore/save are split (rather than the combined
+      # actions/cache action) so the corpus is still saved via `if: always()`
+      # even if a fuzz target finds a crasher and fails the job.
+      - name: Restore fuzz corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.gocache.outputs.dir }}/fuzz
+          key: ${{ runner.os }}-fuzz-corpus-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-fuzz-corpus-
+
+      - name: Run fuzz targets
+        run: mise run fuzz
+
+      - name: Save fuzz corpus
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.gocache.outputs.dir }}/fuzz
+          key: ${{ runner.os }}-fuzz-corpus-${{ github.run_id }}
+
+      # Go writes crashing inputs to <pkg>/testdata/fuzz/<Target>/ in the
+      # checkout (distinct from the cumulative corpus cached above). Uploaded
+      # so a crash can be reproduced locally and committed as a permanent
+      # regression seed.
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers
+          path: "**/testdata/fuzz/**"
+          retention-days: 5
