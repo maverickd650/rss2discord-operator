@@ -30,13 +30,42 @@ echo "Installing mise + pinned dev tools..."
 echo "------------------------------------"
 
 # mise owns every tool version (see .mise/config.toml + .mise/mise.lock), so the
-# devcontainer matches CI exactly. Install mise, then let it install the toolchain.
+# devcontainer matches CI exactly. Install the mise binary directly from a pinned
+# GitHub release with checksum verification (rather than `curl | sh`) so the mise
+# CLI itself is pinned, not just the tools it goes on to install.
 if ! command -v mise &> /dev/null; then
-  # Pin the mise CLI version itself (the tools it then installs are pinned via
-  # .mise/config.toml + .mise/mise.lock). The install script embeds checksums
-  # for this exact version — see https://mise.jdx.dev/installing-mise.html.
-  curl -fsSL https://mise.run | MISE_VERSION=v2026.7.0 sh
-  export PATH="$HOME/.local/bin:$PATH"
+  MISE_VERSION="v2026.7.0"
+  case "$(uname -m)" in
+    x86_64) MISE_ARCH="x64" ;;
+    aarch64|arm64) MISE_ARCH="arm64" ;;
+    *)
+      echo "ERROR: unsupported architecture $(uname -m) for mise ${MISE_VERSION}" >&2
+      exit 1
+      ;;
+  esac
+  MISE_ASSET="mise-${MISE_VERSION}-linux-${MISE_ARCH}"
+  MISE_INSTALL_DIR="$HOME/.local/bin"
+  MISE_TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$MISE_TMP_DIR"' EXIT
+
+  curl -fsSL -o "${MISE_TMP_DIR}/${MISE_ASSET}" \
+    "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/${MISE_ASSET}"
+  curl -fsSL -o "${MISE_TMP_DIR}/SHASUMS256.txt" \
+    "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/SHASUMS256.txt"
+
+  MISE_ACTUAL_SHA="$(sha256sum "${MISE_TMP_DIR}/${MISE_ASSET}" | awk '{print $1}')"
+  MISE_EXPECTED_SHA="$(grep " ${MISE_ASSET}\$" "${MISE_TMP_DIR}/SHASUMS256.txt" | awk '{print $1}')"
+  if [ -z "$MISE_EXPECTED_SHA" ] || [ "$MISE_ACTUAL_SHA" != "$MISE_EXPECTED_SHA" ]; then
+    echo "ERROR: checksum verification failed for ${MISE_ASSET}" >&2
+    exit 1
+  fi
+
+  mkdir -p "$MISE_INSTALL_DIR"
+  chmod +x "${MISE_TMP_DIR}/${MISE_ASSET}"
+  mv "${MISE_TMP_DIR}/${MISE_ASSET}" "${MISE_INSTALL_DIR}/mise"
+  rm -rf "$MISE_TMP_DIR"
+  trap - EXIT
+  export PATH="$MISE_INSTALL_DIR:$PATH"
 fi
 
 # Activate mise for interactive shells.
