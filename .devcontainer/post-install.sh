@@ -32,7 +32,10 @@ echo "------------------------------------"
 # mise owns every tool version (see .mise/config.toml + .mise/mise.lock), so the
 # devcontainer matches CI exactly. Install mise, then let it install the toolchain.
 if ! command -v mise &> /dev/null; then
-  curl -fsSL https://mise.run | sh
+  # Pin the mise CLI version itself (the tools it then installs are pinned via
+  # .mise/config.toml + .mise/mise.lock). The install script embeds checksums
+  # for this exact version — see https://mise.jdx.dev/installing-mise.html.
+  curl -fsSL https://mise.run | MISE_VERSION=v2026.7.0 sh
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
