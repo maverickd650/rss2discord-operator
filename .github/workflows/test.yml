@@ -33,6 +33,12 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+      - name: Cache envtest binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/k8s
+          key: ${{ runner.os }}-envtest-${{ hashFiles('go.sum') }}
+
       - name: Running Tests
         run: mise run test
 
