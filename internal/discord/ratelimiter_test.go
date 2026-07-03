@@ -1,0 +1,76 @@
+package discord
+
+import (
+	"testing"
+	"time"
+)
+
+func TestRateLimiter_ReserveNotCoolingWhenUnseen(t *testing.T) {
+	l := NewRateLimiter()
+	if remaining, cooling := l.reserve("https://discord.com/api/webhooks/1/token"); cooling || remaining != 0 {
+		t.Fatalf("expected no cooldown for an unseen webhook, got remaining=%v cooling=%v", remaining, cooling)
+	}
+}
+
+func TestRateLimiter_CooldownThenReserve(t *testing.T) {
+	l := NewRateLimiter()
+	webhookURL := "https://discord.com/api/webhooks/1/token"
+
+	l.cooldown(webhookURL, time.Minute)
+
+	remaining, cooling := l.reserve(webhookURL)
+	if !cooling {
+		t.Fatal("expected the webhook to be cooling down immediately after cooldown()")
+	}
+	if remaining <= 0 || remaining > time.Minute {
+		t.Fatalf("expected remaining in (0, 1m], got %v", remaining)
+	}
+}
+
+func TestRateLimiter_CooldownIsPerWebhook(t *testing.T) {
+	l := NewRateLimiter()
+	a := "https://discord.com/api/webhooks/1/token-a"
+	b := "https://discord.com/api/webhooks/2/token-b"
+
+	l.cooldown(a, time.Minute)
+
+	if _, cooling := l.reserve(b); cooling {
+		t.Fatal("a different webhook must not be affected by another webhook's cooldown")
+	}
+	if _, cooling := l.reserve(a); !cooling {
+		t.Fatal("expected the original webhook to still be cooling down")
+	}
+}
+
+func TestRateLimiter_ExpiredCooldownIsPruned(t *testing.T) {
+	l := NewRateLimiter()
+	webhookURL := "https://discord.com/api/webhooks/1/token"
+
+	// A cooldown that has already elapsed (negative duration => expiry in
+	// the past) must not report cooling, and must be pruned from the map so
+	// a webhook that's never sent to again doesn't leak an entry forever.
+	l.cooldown(webhookURL, -time.Second)
+
+	if _, cooling := l.reserve(webhookURL); cooling {
+		t.Fatal("expected an already-expired cooldown to not report cooling")
+	}
+	if len(l.cooldowns) != 0 {
+		t.Fatalf("expected the expired entry to be pruned, got %d entries", len(l.cooldowns))
+	}
+}
+
+func TestWebhookKey_HashesRatherThanStoringRawURL(t *testing.T) {
+	l := NewRateLimiter()
+	webhookURL := "https://discord.com/api/webhooks/1/super-secret-token"
+
+	l.cooldown(webhookURL, time.Minute)
+
+	for key := range l.cooldowns {
+		if key == webhookURL {
+			t.Fatal("expected the map key to be a hash, not the raw webhook URL")
+		}
+	}
+	if got := webhookKey(webhookURL); len(got) != 64 {
+		t.Fatalf("expected a 64-char hex-encoded SHA-256 digest, got %d chars: %q", len(got), got)
+	}
+}

@@ -191,19 +191,25 @@ func main() {
 	})
 	exitOnError(err, "Failed to start manager")
 
-	// RSSClient and the Discord HTTP client are constructed once here and
-	// reused across every reconcile, rather than per-reconcile, so that
-	// keep-alive connections to feed/webhook hosts are actually pooled
-	// instead of being torn down and rebuilt on every reconciliation.
+	// RSSClient, the Discord HTTP client, and the Discord rate limiter are
+	// constructed once here and shared across every reconcile, rather than
+	// per-reconcile: the HTTP client so keep-alive connections to
+	// feed/webhook hosts are actually pooled instead of being torn down and
+	// rebuilt every reconciliation, and the rate limiter so a 429 seen while
+	// sending for one FeedGroup also holds off every other FeedGroup sharing
+	// the same webhook (or racing it once
+	// --max-concurrent-feedgroup-reconciles > 1) instead of each discovering
+	// the limit independently.
 	rssClient := rss.NewClient(nil)
 	discordHTTPClient := discord.NewHTTPClient()
+	discordRateLimiter := discord.NewRateLimiter()
 
 	err = (&controller.FeedGroupReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		RSSClient: rssClient,
 		DiscordClientBuilder: func(webhookURL string) *discord.Client {
-			return discord.NewClientWithHTTP(webhookURL, discordHTTPClient)
+			return discord.NewClientWithLimiter(webhookURL, discordHTTPClient, discordRateLimiter)
 		},
 		MaxConcurrentReconciles: maxConcurrentFeedGroupReconciles,
 	}).SetupWithManager(mgr)
