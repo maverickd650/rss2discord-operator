@@ -1,0 +1,25 @@
+---
+# Source: rss2discord-operator/templates/network-policy/allow-metrics-traffic.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rss2discord-operator
+  name: chart-golden-test-rss2discord-operator-allow-metrics-traffic
+  namespace: chart-golden-test-ns
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: rss2discord-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            metrics: enabled
+      ports:
+        - port: 8443
+          protocol: TCP

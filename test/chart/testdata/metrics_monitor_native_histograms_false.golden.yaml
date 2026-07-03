@@ -1,0 +1,28 @@
+---
+# Source: rss2discord-operator/templates/prometheus/controller-manager-metrics-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rss2discord-operator
+    helm.sh/chart: SCRUBBED
+    app.kubernetes.io/instance: chart-golden-test
+    control-plane: controller-manager
+  name: chart-golden-test-rss2discord-operator-metrics-monitor
+  namespace: chart-golden-test-ns
+spec:
+  endpoints:
+  -
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    path: /metrics
+    port: https
+    scheme: https
+    tlsConfig:
+      serverName: chart-golden-test-rss2discord-operator-metrics.chart-golden-test-ns.svc
+      insecureSkipVerify: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rss2discord-operator
+      control-plane: controller-manager
+
