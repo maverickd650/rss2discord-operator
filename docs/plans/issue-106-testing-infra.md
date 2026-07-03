@@ -75,7 +75,7 @@ corrections are load-bearing — task specs below already incorporate them:
 | T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | ✅ done (#128) |
 | T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
 | T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | ✅ done |
-| T6  | promtool check/test rules in CI | 3b | Medium | 2 | 🔄 PR #131 open |
+| T6  | promtool check/test rules in CI | 3b | Medium | 2 | ✅ done (#131) |
 | T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | ✅ done (#129) |
 | T8  | Cache envtest binaries in CI | 5a | Medium | 1 | ✅ done |
 | T9  | Codecov patch status enforcing | 5b | Low — **land last** | 3 | |
@@ -419,7 +419,7 @@ dashboard JSON locally makes it fail; adding a dummy `failureClass{...}` literal
   cross-check cleanly both ways under this definition. The dead-regex check still excludes
   `!~` matchers, as originally specified.
 
-## T6 — promtool rule checks in CI 🔄 PR [#131](https://github.com/maverickd650/rss2discord-operator/pull/131) open
+## T6 — promtool rule checks in CI ✅ done
 
 **Why:** the PrometheusRule's exprs (including the `label_replace` reason extraction) are
 never validated or exercised; a syntax error or broken regex ships silently.
@@ -482,6 +482,16 @@ never validated or exercised; a syntax error or broken regex ships silently.
   touched here, out of scope, but worth knowing about if that task is ever wired into CI.)
 - `gopkg.in/yaml.v3` (already an indirect dependency) becomes direct since `hack/promrules`
   imports it; `go.mod`/`go mod tidy` updated accordingly.
+- Codecov flagged `hack/promrules/main.go`'s patch coverage at 55.56% on the PR (the
+  `io.ReadAll` and `yaml.Encoder` error branches in `run()` weren't exercised). Added
+  `erroringReader`/`erroringWriter` test doubles to reach both without depending on a real
+  stdin/stdout failure mode; package coverage went from 66.7% to 80.0% (the remaining gap is
+  `main()`'s thin `os.Exit` wrapper, not practically unit-testable). Landed as a follow-up
+  commit on the same PR.
+- Mid-review, `main` advanced past this branch's base (T3/#128 merged), and the open PR got
+  auto-rebased onto it (same content, new commit SHAs) — a plain `git push` was rejected
+  until the local branch was reset to match the rebased remote and the coverage-fix commit
+  cherry-picked back on top.
 
 ## T7 — Chart golden-file snapshot tests ✅ done
 
