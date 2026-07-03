@@ -2,6 +2,10 @@
 
 [![codecov](https://codecov.io/gh/maverickd650/rss2discord-operator/graph/badge.svg)](https://codecov.io/gh/maverickd650/rss2discord-operator)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/maverickd650/rss2discord-operator/badge)](https://scorecard.dev/viewer/?uri=github.com/maverickd650/rss2discord-operator)
+[![Tests](https://github.com/maverickd650/rss2discord-operator/actions/workflows/test.yml/badge.svg)](https://github.com/maverickd650/rss2discord-operator/actions/workflows/test.yml)
+[![Lint](https://github.com/maverickd650/rss2discord-operator/actions/workflows/lint.yml/badge.svg)](https://github.com/maverickd650/rss2discord-operator/actions/workflows/lint.yml)
+[![Latest release](https://img.shields.io/github/v/release/maverickd650/rss2discord-operator)](https://github.com/maverickd650/rss2discord-operator/releases)
+[![License](https://img.shields.io/github/license/maverickd650/rss2discord-operator)](LICENSE)
 
 A Kubernetes operator that watches RSS feeds and posts new entries to Discord via webhooks. Feeds are configured declaratively with a `FeedGroup` custom resource.
 
@@ -113,7 +117,7 @@ kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager 
 ### FeedGroup spec
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `discordWebhookSecretRef` | `SecretKeySelector` | required | Secret containing the Discord webhook URL |
 | `interval` | `string` | `30m` | How often to check feeds |
 | `retries` | `int` | `3` | Retries for failed operations |
@@ -127,7 +131,7 @@ kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager 
 ### Feed
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `rssUrl` | `string` | required | RSS feed URL |
 | `filter` | `*Filter` | optional | Filter rules for entries |
 | `format` | `string` | optional | Overrides the group's format for this feed |
@@ -139,7 +143,7 @@ kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager 
 ### Filter
 
 | Field | Type | Description |
-|-------|------|-------------|
+| --- | --- | --- |
 | `regex` | `string` | Regex matched against title/description |
 | `keywords` | `[]string` | Keywords matched against title/description (OR) |
 
@@ -148,7 +152,7 @@ kubectl logs -n rss2discord-operator-system -l control-plane=controller-manager 
 When `enabled`, a feed's messages are sent as a native Discord embed (the colored bubble UI) instead of plain text. The embed's title/link/timestamp come directly from the entry; only the description is templated.
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `enabled` | `bool` | `false` | Render messages as embeds instead of plain text |
 | `color` | `string` | none | Side-bar color, as hex (`#5865F2` or `5865F2`) |
 | `descriptionFormat` | `string` | `{{.Description}}` | Template for the embed description |
@@ -161,7 +165,7 @@ If the feed entry has a lead image (an RSS `<enclosure>` or Media RSS `<media:th
 
 Default (used only when `embed.enabled` is false):
 
-```
+```YAML
 **{{.Title}}**
 {{.Description}}
 [Read more]({{.Link}})
@@ -255,7 +259,7 @@ helm uninstall rss2discord-operator -n rss2discord-operator-system
 The controller exports these Prometheus metrics, all labeled by `namespace` and `name` (the FeedGroup):
 
 | Metric | Type | Extra labels | What it tells you |
-|--------|------|--------------|-------------------|
+| --- | --- | --- | --- |
 | `rss2discord_feed_operations_total` | counter | `rss_url`, `outcome` (`sent`, `fetch_error`, `send_error`, `render_error`, `rate_limited`) | Send-success ratios and a per-feed error breakdown (which feed in the group, and why) |
 | `rss2discord_feed_request_duration_seconds` | histogram | `operation` (`fetch`, `send`) | Latency of the operator's outbound RSS fetches and Discord sends (e.g. a feed host hanging up to its timeout) |
 | `rss2discord_feedgroup_reconcile_duration_seconds` | histogram | — | Wall-clock time of a full reconcile (every feed's fetch and send), so a FeedGroup creeping toward its requeue interval shows up before it starts missing it |
@@ -276,7 +280,7 @@ To actually get resolution out of these metrics:
 The metrics endpoint is enabled by default (`metrics.enabled`, served on `:8443`). The remaining pieces are opt-in via chart values and each requires the relevant operator to be installed in the cluster:
 
 | Value | Default | What it does |
-|-------|---------|--------------|
+| --- | --- | --- |
 | `prometheus.enabled` | `false` | Installs a `ServiceMonitor` so prometheus-operator scrapes the metrics endpoint |
 | `prometheus.scrapeNativeHistograms` | `true` | With `prometheus.enabled`, has the `ServiceMonitor` negotiate protobuf so Prometheus actually gets resolution out of the operator's native-only histograms (`feed_request_duration_seconds`, `feedgroup_reconcile_duration_seconds`, `message_overflow_chars`); without it these three metrics expose `_count`/`_sum` only |
 | `prometheusRule.enabled` | `false` | Installs a `PrometheusRule` alerting on sustained `fetch_error` / `send_error` / `rate_limited` per feed (annotations name the failing feed URL and, for fetch/send errors, the failure reason). Tune with `prometheusRule.rateInterval`, `.for`, and `.severity` |
@@ -291,6 +295,7 @@ helm install rss2discord-operator ./dist/chart \
 ```
 
 `grafanaDashboard.enabled=true` on its own assumes:
+
 - the [grafana-operator](https://github.com/grafana/grafana-operator) is installed in the cluster (its `GrafanaDashboard` CRD must exist), and
 - it manages a `Grafana` CR with a datasource named `prometheus` in it.
 
