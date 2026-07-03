@@ -1,0 +1,99 @@
+# Unit tests for dist/chart's rendered PrometheusRule, run via
+# `mise run promtool-rules` (see .mise/config.toml). rules.yaml is the
+# rendered-and-unwrapped rule file that task generates next to this one --
+# it's gitignored, never committed.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # outcome="fetch_error_not_found" firing continuously proves both the
+  # RSS2DiscordFeedFetchErrors alert and its label_replace reason
+  # extraction (reason="not_found" comes only from that regex, not from any
+  # label already on the metric).
+  - interval: 1m
+    input_series:
+      - series: 'rss2discord_feed_operations_total{namespace="demo",name="feedgroup-sample",rss_url="https://example.invalid/feed.xml",outcome="fetch_error_not_found"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedFetchErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: demo
+              name: feedgroup-sample
+              rss_url: https://example.invalid/feed.xml
+              outcome: fetch_error_not_found
+              reason: not_found
+            exp_annotations:
+              summary: "FeedGroup demo/feedgroup-sample is failing to fetch feed https://example.invalid/feed.xml"
+              description: >-
+                FeedGroup demo/feedgroup-sample has had sustained RSS fetch errors on feed
+                https://example.invalid/feed.xml (reason: not_found) for at least 15m. Check
+                the feed URL, network egress, and the FeedGroup status conditions.
+
+  # outcome="rate_limited" firing continuously proves RSS2DiscordFeedRateLimited.
+  - interval: 1m
+    input_series:
+      - series: 'rss2discord_feed_operations_total{namespace="demo",name="feedgroup-sample",rss_url="https://example.invalid/feed.xml",outcome="rate_limited"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedRateLimited
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: demo
+              name: feedgroup-sample
+              rss_url: https://example.invalid/feed.xml
+            exp_annotations:
+              summary: "FeedGroup demo/feedgroup-sample is being rate limited by Discord"
+              description: >-
+                FeedGroup demo/feedgroup-sample has been rate limited by Discord while sending
+                feed https://example.invalid/feed.xml for at least 15m. Posts are being
+                delayed; consider reducing the polling frequency or splitting the feed.
+
+  # outcome="send_error_timeout" firing continuously proves both
+  # RSS2DiscordFeedSendErrors and its label_replace reason extraction.
+  - interval: 1m
+    input_series:
+      - series: 'rss2discord_feed_operations_total{namespace="demo",name="feedgroup-sample",rss_url="https://example.invalid/feed.xml",outcome="send_error_timeout"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedSendErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: demo
+              name: feedgroup-sample
+              rss_url: https://example.invalid/feed.xml
+              outcome: send_error_timeout
+              reason: timeout
+            exp_annotations:
+              summary: "FeedGroup demo/feedgroup-sample is failing to send feed https://example.invalid/feed.xml to Discord"
+              description: >-
+                FeedGroup demo/feedgroup-sample has had sustained Discord send errors on feed
+                https://example.invalid/feed.xml (reason: timeout) for at least 15m. Check the
+                webhook URL and the FeedGroup status conditions.
+
+  # outcome="render_error" firing continuously must never fire any alert --
+  # it's dashboard-only by design (see CLAUDE.md and T5's observability
+  # contract test). Asserting all three alerts stay silent encodes that
+  # deliberate omission as a regression test.
+  - interval: 1m
+    input_series:
+      - series: 'rss2discord_feed_operations_total{namespace="demo",name="feedgroup-sample",rss_url="https://example.invalid/feed.xml",outcome="render_error"}'
+        values: "0+1x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedFetchErrors
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedRateLimited
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: RSS2DiscordFeedSendErrors
+        exp_alerts: []

@@ -12,6 +12,7 @@ kind = "0.32.0"
 kubectl = "1.36.2"
 cosign = "3.1.1"
 kubebuilder = "4.15.0"
+promtool = "3.13.0" # ships inside the prometheus/prometheus release; resolved via mise's registry (aqua backend)
 
 [env]
 # Image used by build/deploy targets; override with `IMG=... mise run docker-build`.
@@ -110,6 +111,16 @@ if ! kind get clusters | grep -qx "$cluster"; then
 fi
 trap 'kind delete cluster --name "$cluster"' EXIT
 KIND=kind KIND_CLUSTER="$cluster" go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+'''
+
+[tasks.promtool-rules]
+description = "Validate and unit-test dist/chart's rendered PrometheusRule with promtool"
+run = '''
+set -eu
+helm template rel dist/chart -s templates/prometheus/prometheus-rule.yaml --set prometheusRule.enabled=true \
+  | go run ./hack/promrules > test/promrules/rules.yaml
+promtool check rules test/promrules/rules.yaml
+promtool test rules test/promrules/tests.yaml
 '''
 
 ##@ Build
