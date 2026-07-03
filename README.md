@@ -1,6 +1,7 @@
 # rss2discord-operator
 
 [![codecov](https://codecov.io/gh/maverickd650/rss2discord-operator/graph/badge.svg)](https://codecov.io/gh/maverickd650/rss2discord-operator)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/maverickd650/rss2discord-operator/badge)](https://scorecard.dev/viewer/?uri=github.com/maverickd650/rss2discord-operator)
 
 A Kubernetes operator that watches RSS feeds and posts new entries to Discord via webhooks. Feeds are configured declaratively with a `FeedGroup` custom resource.
 
