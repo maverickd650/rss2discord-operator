@@ -47,6 +47,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -785,9 +786,10 @@ const requeueJitterMaxFactor = 0.1
 
 // requeueWithStatus persists feedGroup's status and requeues after the given
 // interval (falling back to fallback if interval is unset or invalid). The
-// Status().Update call is skipped when the status hasn't actually changed
-// from original, since a conditional-GET 304 makes the common reconcile a
-// no-op that would otherwise still pay for a status write every interval.
+// status write (applyStatus) is skipped when the status hasn't actually
+// changed from original, since a conditional-GET 304 makes the common
+// reconcile a no-op that would otherwise still pay for a status write every
+// interval -- a no-op server-side apply still costs an API round trip.
 // webhookErr, if non-nil, means the reconcile never got far enough to
 // process any feed (the webhook Secret couldn't be resolved); it takes over
 // the Ready condition unconditionally, since per-feed status is stale/empty
@@ -813,17 +815,74 @@ func (r *FeedGroupReconciler) requeueWithStatus(ctx context.Context, feedGroup *
 		return ctrl.Result{RequeueAfter: duration}, nil
 	}
 
-	if err := r.Status().Update(ctx, feedGroup); err != nil {
+	if err := r.applyStatus(ctx, feedGroup); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: duration}, nil
 }
 
+// statusFieldOwner names this controller as the field manager for
+// server-side apply status writes. It matches the event recorder's source
+// name in SetupWithManager, since both identify the same actor.
+const statusFieldOwner = "feedgroup-controller"
+
+// applyStatus persists feedGroup's status via server-side apply rather than
+// a whole-object Status().Update. FeedGroupStatus.Feeds is listType=map,
+// listMapKey=rssUrl, so entries merge (and prune, for feeds no longer sent
+// in the patch) by rssUrl instead of by slice position -- and, more broadly,
+// SSA lets this controller declare itself owner of exactly the status
+// fields it manages instead of unconditionally overwriting the whole
+// subresource, which is what removes the conflict-retry churn Update()
+// incurs once reconciles run with concurrency > 1.
+//
+// This controller is the sole writer of FeedGroup.Status, so ForceOwnership
+// is safe here: there's no other field manager whose fields could be
+// clobbered.
+//
+// kubebuilder doesn't yet scaffold typed apply-configuration generation for
+// custom resources (the newer, non-deprecated Client.Apply/SubResource(...).
+// Apply methods require one), so this patches with the typed FeedGroup
+// object itself via the older client.Apply Patch -- still fully functional,
+// just not the most future-proof form. A real GVK must be set on the object
+// first: a typed object read via Get() has a blank TypeMeta, but SSA's
+// payload (a plain json.Marshal of the object) needs apiVersion/kind to
+// identify the resource, unlike Update()/the strategic-merge-patch paths
+// elsewhere which don't inspect the body's TypeMeta at all.
+func (r *FeedGroupReconciler) applyStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup) error {
+	gvk, err := apiutil.GVKForObject(feedGroup, r.Scheme)
+	if err != nil {
+		return err
+	}
+	originalTypeMeta := feedGroup.TypeMeta
+	feedGroup.TypeMeta = metav1.TypeMeta{APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind}
+	defer func() { feedGroup.TypeMeta = originalTypeMeta }()
+
+	// feedGroup was read via Get(), so it carries the object's current
+	// managedFields (populated by etcd/the API server); the API server
+	// rejects an apply request whose body has managedFields set ("metadata.
+	// managedFields must be nil"), so it must be cleared before marshaling.
+	// ResourceVersion is cleared too: leaving the one from Get() in place
+	// would turn this into an optimistic-concurrency-checked write (a
+	// resourceVersion mismatch fails the whole patch), reintroducing exactly
+	// the conflict-retry churn SSA is meant to remove -- field-ownership
+	// merging, not "did anything else change first", is what should decide
+	// whether this write succeeds. Nothing later in this reconcile reads
+	// either field, so there's no need to restore them afterward.
+	feedGroup.ManagedFields = nil
+	feedGroup.ResourceVersion = ""
+
+	//nolint:staticcheck // client.Apply is deprecated in favor of Client.Apply()/SubResource(...).Apply(), which take a
+	// generated ApplyConfiguration type; kubebuilder has no applyconfiguration-gen equivalent for custom resources, and
+	// hand-writing one for FeedGroupStatus's nested Conditions/Feeds shape risks getting the listType=map merge
+	// semantics subtly wrong. Patching with the typed object is still fully functional SSA.
+	return r.Status().Patch(ctx, feedGroup, client.Apply, client.FieldOwner(statusFieldOwner), client.ForceOwnership)
+}
+
 // jitterDuration adds up to requeueJitterMaxFactor extra to duration when
 // enabled is true, and returns duration unchanged otherwise. Split out from
 // requeueWithStatus so it can be unit-tested without a real client.Client
-// (requeueWithStatus's Status().Update path needs one).
+// (requeueWithStatus's applyStatus call needs one).
 func jitterDuration(duration time.Duration, enabled bool) time.Duration {
 	if !enabled {
 		return duration

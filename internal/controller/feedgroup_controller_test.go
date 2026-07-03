@@ -2535,6 +2535,65 @@ var _ = Describe("FeedGroup Controller", func() {
 		})
 	})
 
+	Describe("Server-side apply status writes", func() {
+		It("should not conflict when two stale-resourceVersion status writes race", func() {
+			// applyStatus uses server-side apply rather than Status().Update,
+			// specifically so that a second write computed from a
+			// now-stale-resourceVersion read (e.g. two concurrent reconciles of
+			// FeedGroups sharing... no, of the *same* FeedGroup, which
+			// concurrency > 1 combined with a requeue racing a fresh event could
+			// produce) doesn't fail with an optimistic-concurrency conflict the
+			// way Status().Update would.
+			const feedGroupName = "test-feedgroup-ssa-concurrent"
+
+			feedGroup := &rss2discordv1alpha1.FeedGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      feedGroupName,
+					Namespace: namespace,
+				},
+				Spec: rss2discordv1alpha1.FeedGroupSpec{
+					DiscordWebhookSecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-ssa-concurrent"},
+						Key:                  secretURLKey,
+					},
+					Interval: defaultInterval,
+					Feeds: []rss2discordv1alpha1.FeedSpec{
+						{RSSUrl: "https://example.com/ssa-concurrent.xml"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+
+			reconciler := &FeedGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+
+			By("Reading two independent copies of the FeedGroup at the same resourceVersion")
+			fgA := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, fgA)).To(Succeed())
+			fgB := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, fgB)).To(Succeed())
+			Expect(fgA.ResourceVersion).To(Equal(fgB.ResourceVersion), "both copies must start at the same resourceVersion for this to test anything")
+
+			By("Applying status computed from the first copy")
+			ensureFeedStatuses(fgA)
+			fgA.Status.ObservedGeneration = fgA.Generation
+			setReadyCondition(fgA, nil)
+			setFeedReachableCondition(fgA)
+			Expect(reconciler.applyStatus(ctx, fgA)).To(Succeed())
+
+			By("Verifying the first apply actually changed the object's resourceVersion server-side")
+			updated := &rss2discordv1alpha1.FeedGroup{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
+			Expect(updated.ResourceVersion).NotTo(Equal(fgB.ResourceVersion))
+
+			By("Applying status computed from the second, now-stale copy -- must not fail with a conflict")
+			ensureFeedStatuses(fgB)
+			fgB.Status.ObservedGeneration = fgB.Generation
+			setReadyCondition(fgB, nil)
+			setFeedReachableCondition(fgB)
+			Expect(reconciler.applyStatus(ctx, fgB)).To(Succeed())
+		})
+	})
+
 	Describe("Requeue behavior", func() {
 		It("should use normal interval when no retries needed", func() {
 			By("Creating a mock RSS feed server with empty feed")
