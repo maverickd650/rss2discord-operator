@@ -2,19 +2,24 @@ package discord
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
+// testWebhookURL is reused across cases below that don't care about a
+// specific URL, just that cooldowns key off of one.
+const testWebhookURL = "https://discord.com/api/webhooks/1/token"
+
 func TestRateLimiter_ReserveNotCoolingWhenUnseen(t *testing.T) {
 	l := NewRateLimiter()
-	if remaining, cooling := l.reserve("https://discord.com/api/webhooks/1/token"); cooling || remaining != 0 {
+	if remaining, cooling := l.reserve(testWebhookURL); cooling || remaining != 0 {
 		t.Fatalf("expected no cooldown for an unseen webhook, got remaining=%v cooling=%v", remaining, cooling)
 	}
 }
 
 func TestRateLimiter_CooldownThenReserve(t *testing.T) {
 	l := NewRateLimiter()
-	webhookURL := "https://discord.com/api/webhooks/1/token"
+	webhookURL := testWebhookURL
 
 	l.cooldown(webhookURL, time.Minute)
 
@@ -42,9 +47,37 @@ func TestRateLimiter_CooldownIsPerWebhook(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_CooldownExpiresAfterRetryAfter exercises the real expiry
+// transition -- cooling down, then not, once the full duration has actually
+// elapsed -- using synctest's fake clock instead of TestRateLimiter_
+// ExpiredCooldownIsPruned's approach of faking "already expired" with a
+// negative duration. time.Sleep inside the bubble advances the fake clock
+// instantly rather than pausing the test for a full minute.
+func TestRateLimiter_CooldownExpiresAfterRetryAfter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l := NewRateLimiter()
+		webhookURL := testWebhookURL
+
+		l.cooldown(webhookURL, time.Minute)
+
+		if _, cooling := l.reserve(webhookURL); !cooling {
+			t.Fatal("expected the webhook to be cooling down immediately after cooldown()")
+		}
+
+		time.Sleep(time.Minute)
+
+		if _, cooling := l.reserve(webhookURL); cooling {
+			t.Fatal("expected the cooldown to have expired after the full retry-after duration")
+		}
+		if len(l.cooldowns) != 0 {
+			t.Fatalf("expected the expired entry to be pruned, got %d entries", len(l.cooldowns))
+		}
+	})
+}
+
 func TestRateLimiter_ExpiredCooldownIsPruned(t *testing.T) {
 	l := NewRateLimiter()
-	webhookURL := "https://discord.com/api/webhooks/1/token"
+	webhookURL := testWebhookURL
 
 	// A cooldown that has already elapsed (negative duration => expiry in
 	// the past) must not report cooling, and must be pruned from the map so

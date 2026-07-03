@@ -1,7 +1,6 @@
 package discord
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -89,7 +88,7 @@ func TestTruncateRunes(t *testing.T) {
 
 func TestSendMessage_EmptyWebhookURL(t *testing.T) {
 	c := NewClient("")
-	err := c.SendMessageText(context.Background(), "empty webhook test")
+	err := c.SendMessageText(t.Context(), "empty webhook test")
 	if err == nil || !strings.Contains(err.Error(), "webhook URL is empty") {
 		t.Fatalf("expected empty-URL error, got %v", err)
 	}
@@ -97,7 +96,7 @@ func TestSendMessage_EmptyWebhookURL(t *testing.T) {
 
 func TestSendMessage_EmptyContentAndEmbed(t *testing.T) {
 	c := NewClient("https://discord.com/api/webhooks/1/abc")
-	err := c.SendMessage(context.Background(), Message{})
+	err := c.SendMessage(t.Context(), Message{})
 	if err == nil || !strings.Contains(err.Error(), "content is empty") {
 		t.Fatalf("expected empty-content error, got %v", err)
 	}
@@ -105,7 +104,7 @@ func TestSendMessage_EmptyContentAndEmbed(t *testing.T) {
 
 func TestSendMessage_InvalidWebhookURL(t *testing.T) {
 	c := NewClient("://not a url")
-	err := c.SendMessageText(context.Background(), "invalid url test")
+	err := c.SendMessageText(t.Context(), "invalid url test")
 	if err == nil {
 		t.Fatal("expected error for malformed webhook URL, got nil")
 	}
@@ -122,7 +121,7 @@ func TestSendMessage_ReturnsRateLimitError(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "rate limited test")
+	err := c.SendMessageText(t.Context(), "rate limited test")
 
 	rle, ok := errors.AsType[*RateLimitError](err)
 	if !ok {
@@ -144,7 +143,7 @@ func TestSendMessage_ReturnsErrorOnNon2xx(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "non-2xx test")
+	err := c.SendMessageText(t.Context(), "non-2xx test")
 	if err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("expected 400 error, got %v", err)
 	}

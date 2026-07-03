@@ -17,7 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -31,7 +30,7 @@ import (
 // filter regex records the compile error on the feed's status and sends
 // nothing, instead of panicking or silently matching everything.
 func TestProcessFeed_InvalidFilterRegex(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-bad-regex", "fg-bad-regex"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -67,7 +66,7 @@ func TestProcessFeed_InvalidFilterRegex(t *testing.T) {
 // pin the group at RetryInterval cadence forever -- and is recorded on
 // status.
 func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-bad-template", "fg-bad-template"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -96,7 +95,7 @@ func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 // retried and the error is recorded, exercising the thread-name compile
 // branch distinct from the message-template branch above.
 func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-bad-thread-name", "fg-bad-thread-name"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -126,7 +125,7 @@ func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
 // carrying a Last-Modified validator (rather than an ETag) is still stored,
 // since only the ETag persist path had previously been exercised.
 func TestProcessFeed_NotModifiedPersistsLastModified(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-not-modified-lm", "fg-not-modified-lm"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -149,7 +148,7 @@ func TestProcessFeed_NotModifiedPersistsLastModified(t *testing.T) {
 // fetch, so it reads as "last time we confirmed this feed's state" rather
 // than "last time we attempted to reach it".
 func TestProcessFeed_LastCheckedTracksSuccessNotAttempts(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-lastchecked", "fg-lastchecked"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -172,7 +171,7 @@ func TestProcessFeed_LastCheckedTracksSuccessNotAttempts(t *testing.T) {
 // in LastSent is not re-delivered, exercising the dedup short-circuit
 // independently of any filter/template path.
 func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-dedup", "fg-dedup"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -205,7 +204,7 @@ func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
 // the 304 nor the empty-entries branch runs for a fetch that did return
 // entries, all of which were already handled.
 func TestProcessFeed_RecoversFromStaleErrorWithNoNewEntries(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-recovers", "fg-recovers"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -292,7 +291,7 @@ func TestPermanentBackoffDuration_ClampsRetryCountBelowOne(t *testing.T) {
 // wantRetry (the group's normal interval is unaffected), and does not set a
 // sentinel on the first few retries.
 func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-perm-backoff", "fg-perm-backoff"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -338,7 +337,7 @@ func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
 // exponential backoff exceeds 6h, BackoffUntil is set to the sentinel and the
 // Warning Event fires.
 func TestProcessFeed_PermanentFetchFailureCapSetsSentinel(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-perm-sentinel", "fg-perm-sentinel"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -372,7 +371,7 @@ func TestProcessFeed_PermanentFetchFailureCapSetsSentinel(t *testing.T) {
 // fetch (including a 304) clears BackoffUntil set by a previous permanent
 // failure.
 func TestProcessFeed_PermanentFailureClearedOnSuccess(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "processfeed-perm-clear", "fg-perm-clear"
 	defer deleteFeedGroupMetrics(ns, name)
 

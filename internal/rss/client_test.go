@@ -1,7 +1,6 @@
 package rss
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +21,7 @@ const testLastModified = "Wed, 21 Oct 2015 07:28:00 GMT"
 
 func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), "ftp://example.com/feed.xml", CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), "ftp://example.com/feed.xml", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for non-http(s) scheme, got nil")
 	}
@@ -33,7 +32,7 @@ func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
 
 func TestFetchEntries_RejectsEmptyURL(t *testing.T) {
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), "   ", CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), "   ", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for an empty/blank feed URL, got nil")
 	}
@@ -44,7 +43,7 @@ func TestFetchEntries_RejectsEmptyURL(t *testing.T) {
 
 func TestFetchEntries_RejectsUnparsableURL(t *testing.T) {
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), "://bad-url", CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), "://bad-url", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for an unparsable feed URL, got nil")
 	}
@@ -63,7 +62,7 @@ func TestFetchEntries_EnforcesSizeCap(t *testing.T) {
 	// Use a plain client so loopback test servers aren't rejected by the
 	// SSRF guard, isolating this test to the size-cap behavior.
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for oversized response, got nil")
 	}
@@ -79,7 +78,7 @@ func TestFetchEntries_ParsesValidRSS(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	result, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +97,7 @@ func TestFetchEntries_SendsETagAndLastModifiedValidators(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{
 		ETag:         testETag,
 		LastModified: testLastModified,
 	})
@@ -122,7 +121,7 @@ func TestFetchEntries_SendsUserAgent(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +139,7 @@ func TestFetchEntries_StoresValidatorsFromSuccessfulResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	result, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +165,7 @@ func TestFetchEntries_HandlesNotModifiedResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{ETag: testETag})
+	result, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{ETag: testETag})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +188,7 @@ func TestFetchEntries_ReturnsErrorOnNon2xxStatus(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for non-2xx response, got nil")
 	}
@@ -208,7 +207,7 @@ func TestFetchEntries_ReturnsErrorOnMalformedXML(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error for malformed XML body, got nil")
 	}
@@ -227,7 +226,7 @@ func TestFetchEntries_RefreshesValidatorsOnNotModified(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{})
-	result, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{
+	result, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{
 		ETag:         `"v1"`,
 		LastModified: testLastModified,
 	})
@@ -312,7 +311,7 @@ func TestFetchEntries_RespectsTimeout(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(&http.Client{Timeout: 10 * time.Millisecond})
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -328,7 +327,7 @@ func TestDefaultClient_RejectsLoopbackTarget(t *testing.T) {
 	// refuse to connect to a loopback address such as a local test server
 	// or a feed URL pointing at 127.0.0.1.
 	c := NewClient(nil)
-	_, err := c.FetchEntries(context.Background(), srv.URL, CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), srv.URL, CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error connecting to loopback address, got nil")
 	}
@@ -390,7 +389,7 @@ func TestDefaultClient_RejectsUnresolvableHost(t *testing.T) {
 	// exercises the DialContext's LookupIP error path (rather than the
 	// isPublicIP rejection exercised by TestDefaultClient_RejectsLoopbackTarget).
 	c := NewClient(nil)
-	_, err := c.FetchEntries(context.Background(), "http://does-not-resolve.invalid/feed.xml", CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), "http://does-not-resolve.invalid/feed.xml", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error resolving an unresolvable host, got nil")
 	}
@@ -415,7 +414,7 @@ func TestFetchEntries_ReturnsErrorOnBodyReadFailure(t *testing.T) {
 	})
 
 	c := NewClient(&http.Client{Transport: rt})
-	_, err := c.FetchEntries(context.Background(), "http://example.com/feed.xml", CacheValidators{})
+	_, err := c.FetchEntries(t.Context(), "http://example.com/feed.xml", CacheValidators{})
 	if err == nil {
 		t.Fatal("expected error reading response body, got nil")
 	}
