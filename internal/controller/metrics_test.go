@@ -17,7 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -75,7 +74,7 @@ func histogramSampleCount(t *testing.T, namespace, name, operation string) uint6
 // outcome label -- the labels the dashboard and PrometheusRule alerts depend
 // on, which previously had no test coverage at all.
 func TestProcessFeed_RecordsOutcomeMetric(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	cases := []struct {
 		name     string
@@ -140,7 +139,7 @@ func TestProcessFeed_RecordsOutcomeMetric(t *testing.T) {
 // delivery both observes the send-duration histogram and advances the
 // last-success freshness gauge.
 func TestProcessFeed_SentRecordsDurationAndFreshness(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "metrics-sent-extra", "fg-sent-extra"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -166,7 +165,7 @@ func TestProcessFeed_SentRecordsDurationAndFreshness(t *testing.T) {
 // only moved on an actual Discord delivery, so a feed that's simply caught up
 // (rather than broken) would eventually trip a staleness alert.
 func TestProcessFeed_QuietFetchAdvancesFreshness(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	cases := []struct {
 		name        string
@@ -211,7 +210,7 @@ func messageOverflowSampleCount(t *testing.T, namespace, name string) uint64 {
 // observation on messageOverflowChars, so an operator can see how often a
 // FeedGroup's content is actually getting cut off.
 func TestProcessFeed_RecordsMessageOverflow(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "metrics-overflow", "fg-overflow"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -240,7 +239,7 @@ func TestProcessFeed_RecordsMessageOverflow(t *testing.T) {
 // entry whose rendered content fits within Discord's limits does not record
 // an observation, so the histogram's count reflects only actual overflows.
 func TestProcessFeed_NoOverflowMetricWhenContentFits(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "metrics-no-overflow", "fg-no-overflow"
 	defer deleteFeedGroupMetrics(ns, name)
 
@@ -266,7 +265,7 @@ func TestProcessFeed_NoOverflowMetricWhenContentFits(t *testing.T) {
 // own limits, so only the combined-length clamp can be responsible for any
 // recorded overflow.
 func TestProcessFeed_RecordsMessageOverflowFromEmbedTotalLengthClamp(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	ns, name := "metrics-embed-total-overflow", "fg-embed-total-overflow"
 	defer deleteFeedGroupMetrics(ns, name)
 

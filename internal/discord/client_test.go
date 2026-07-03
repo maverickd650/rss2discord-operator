@@ -1,7 +1,6 @@
 package discord
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,7 +18,7 @@ func TestSendMessage_RejectsNonDiscordHost(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL) // httptest URL is http://127.0.0.1:PORT, not discord.com
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected error for non-Discord webhook host, got nil")
 	}
@@ -50,7 +49,7 @@ func TestSendMessage_DoesNotFollowRedirect(t *testing.T) {
 	client.CheckRedirect = NewHTTPClient().CheckRedirect
 
 	c := NewClientWithHTTP(srv.URL, client)
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected the unfollowed redirect's 3xx status to surface as an error")
 	}
@@ -80,7 +79,7 @@ func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
 
 	// First send actually hits the server and gets 429'd, which records the
 	// cooldown.
-	if _, ok := errors.AsType[*RateLimitError](c1.SendMessageText(context.Background(), "first")); !ok {
+	if _, ok := errors.AsType[*RateLimitError](c1.SendMessageText(t.Context(), "first")); !ok {
 		t.Fatal("expected the first send to reach the server and return *RateLimitError")
 	}
 	if requests != 1 {
@@ -89,7 +88,7 @@ func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
 
 	// A second Client for the same webhook, sharing the limiter, must be
 	// short-circuited by the cooldown rather than issuing another request.
-	err := c2.SendMessageText(context.Background(), "second")
+	err := c2.SendMessageText(t.Context(), "second")
 	rle, ok := errors.AsType[*RateLimitError](err)
 	if !ok {
 		t.Fatalf("expected *RateLimitError from the shared cooldown, got %v", err)
@@ -117,7 +116,7 @@ func TestSendMessage_NilRateLimiterDoesNotCooldown(t *testing.T) {
 	// NewClientWithHTTP (no limiter) must behave exactly as before this
 	// change: every send reaches the server, with no cross-Client cooldown.
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	_, _ = c.SendMessageText(context.Background(), "first"), c.SendMessageText(context.Background(), "second")
+	_, _ = c.SendMessageText(t.Context(), "first"), c.SendMessageText(t.Context(), "second")
 	if requests != 2 {
 		t.Fatalf("expected both sends to reach the server without a shared limiter, got %d requests", requests)
 	}
@@ -125,7 +124,7 @@ func TestSendMessage_NilRateLimiterDoesNotCooldown(t *testing.T) {
 
 func TestSendMessage_RejectsHTTPScheme(t *testing.T) {
 	c := NewClient("http://discord.com/api/webhooks/123/abc")
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected error for non-https scheme, got nil")
 	}
@@ -147,7 +146,7 @@ func TestSendMessage_AcceptsDiscordHost(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	if err := c.SendMessageText(context.Background(), "hello"); err != nil {
+	if err := c.SendMessageText(t.Context(), "hello"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !requestReceived {
@@ -168,7 +167,7 @@ func TestSendMessage_SuppressesMentionsByDefault(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "@everyone breaking news")
+	err := c.SendMessageText(t.Context(), "@everyone breaking news")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,7 +187,7 @@ func TestSendMessage_RedactsWebhookURLOnTransportError(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(webhookURL, srv.Client())
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected a transport error, got nil")
 	}
@@ -210,7 +209,7 @@ func TestSendMessage_ClampsCombinedEmbedLength(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessage(context.Background(), Message{
+	err := c.SendMessage(t.Context(), Message{
 		Embed: &Embed{
 			Title:       strings.Repeat("t", 256),
 			Description: strings.Repeat("d", 4096),
@@ -260,7 +259,7 @@ func TestSendMessage_SendsEmbedWithColorAndThumbnail(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessage(context.Background(), Message{
+	err := c.SendMessage(t.Context(), Message{
 		Embed: &Embed{
 			Title:        "Breaking News",
 			Description:  "Something happened",
@@ -301,7 +300,7 @@ func TestSendMessage_SetsThreadNameForForumChannel(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessage(context.Background(), Message{Content: "hello", ThreadName: "New Post Title"})
+	err := c.SendMessage(t.Context(), Message{Content: "hello", ThreadName: "New Post Title"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -322,7 +321,7 @@ func TestSendMessage_SetsThreadIDQueryParamForExistingThread(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessage(context.Background(), Message{Content: "hello", ThreadID: "123456789"})
+	err := c.SendMessage(t.Context(), Message{Content: "hello", ThreadID: "123456789"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -342,7 +341,7 @@ func TestSendMessage_SurfacesDiscordErrorDetail(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected error for 400 response, got nil")
 	}
@@ -363,7 +362,7 @@ func TestSendMessage_ErrorWithoutBodyStillReturnsStatus(t *testing.T) {
 	defer delete(AllowedWebhookHosts, "127.0.0.1")
 
 	c := NewClientWithHTTP(srv.URL, srv.Client())
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
 	}
@@ -385,7 +384,7 @@ func TestSendMessage_RespectsTimeout(t *testing.T) {
 	client := srv.Client()
 	client.Timeout = 10 * time.Millisecond
 	c := NewClientWithHTTP(srv.URL, client)
-	err := c.SendMessageText(context.Background(), "hello")
+	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected timeout-related error, got nil")
 	}
