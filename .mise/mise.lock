@@ -24,6 +24,45 @@ checksum = "sha256:14d2678dfbfde18798151e86fbd91ebdadbb7424b18412a42a155dd8a2df4
 url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-darwin-amd64"
 provenance = "cosign"
 
+[[tools."github:go-gremlins/gremlins"]]
+version = "0.6.0"
+backend = "github:go-gremlins/gremlins"
+
+[tools."github:go-gremlins/gremlins"."platforms.linux-arm64"]
+checksum = "sha256:686542674e54559afb7e86d6994d342c19a856cfd970c315748989537936664c"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098116"
+
+[tools."github:go-gremlins/gremlins"."platforms.linux-arm64-musl"]
+checksum = "sha256:686542674e54559afb7e86d6994d342c19a856cfd970c315748989537936664c"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098116"
+
+[tools."github:go-gremlins/gremlins"."platforms.linux-x64"]
+checksum = "sha256:b02a42e47935f891c9a411d68c07e211c7082609e79c2435b67c85ee9658c538"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098103"
+
+[tools."github:go-gremlins/gremlins"."platforms.linux-x64-musl"]
+checksum = "sha256:b02a42e47935f891c9a411d68c07e211c7082609e79c2435b67c85ee9658c538"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098103"
+
+[tools."github:go-gremlins/gremlins"."platforms.macos-arm64"]
+checksum = "sha256:90de858ffad3eea5018e41cdf28747b7003966684b9420f4605eb10bdad0c301"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098118"
+
+[tools."github:go-gremlins/gremlins"."platforms.macos-x64"]
+checksum = "sha256:6b00937bb51a9ac994371b9835572320f1f26f4e3ffce7b212b8b85afa0a12ae"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098115"
+
+[tools."github:go-gremlins/gremlins"."platforms.windows-x64"]
+checksum = "sha256:5b4f42d7d9cc19149539f0117ad66521883df9793942b48d20b17904fa6526f2"
+url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins_0.6.0_windows_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098106"
+
 [[tools.go]]
 version = "1.26.4"
 backend = "core:go"
