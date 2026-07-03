@@ -27,6 +27,32 @@ func TestSendMessage_RejectsNonDiscordHost(t *testing.T) {
 	}
 }
 
+func TestNewHTTPClientWithTransportWrap_WrapsAndPreservesRedirectRefusal(t *testing.T) {
+	var wrapped bool
+	wrap := func(rt http.RoundTripper) http.RoundTripper {
+		wrapped = true
+		return rt
+	}
+
+	client := NewHTTPClientWithTransportWrap(wrap)
+	if !wrapped {
+		t.Fatal("expected wrap to be invoked when building the client")
+	}
+	if client.CheckRedirect == nil {
+		t.Fatal("expected CheckRedirect to still refuse redirects")
+	}
+}
+
+func TestNewHTTPClientWithTransportWrap_NilWrapMatchesNewHTTPClient(t *testing.T) {
+	client := NewHTTPClientWithTransportWrap(nil)
+	if client.Transport == nil {
+		t.Fatal("expected a non-nil transport")
+	}
+	if client.CheckRedirect == nil {
+		t.Fatal("expected CheckRedirect to still refuse redirects")
+	}
+}
+
 func TestSendMessage_DoesNotFollowRedirect(t *testing.T) {
 	attackerHit := false
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -57,8 +57,23 @@ func NewClientWithLimiter(webhookURL string, httpClient *http.Client, limiter *R
 // secret) should construct this once and share it via NewClientWithHTTP, so
 // that connections to discord.com are pooled instead of rebuilt per client.
 func NewHTTPClient() *http.Client {
+	return NewHTTPClientWithTransportWrap(nil)
+}
+
+// NewHTTPClientWithTransportWrap is like NewHTTPClient, but passes the
+// transport through wrap (e.g. otelhttp.NewTransport) before use. wrap wraps
+// around the transport, never replaces it, so the redirect-refusal behavior
+// below still applies to every request. A nil wrap behaves exactly like
+// NewHTTPClient.
+func NewHTTPClientWithTransportWrap(wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+	var rt = http.DefaultTransport
+	if wrap != nil {
+		rt = wrap(rt)
+	}
+
 	return &http.Client{
-		Timeout: defaultTimeout,
+		Timeout:   defaultTimeout,
+		Transport: rt,
 		// SendMessage checks the request URL's host against
 		// AllowedWebhookHosts before sending, but http.Client.Do transparently
 		// follows redirects by default, replaying the POST body (message
