@@ -72,11 +72,11 @@ corrections are load-bearing — task specs below already incorporate them:
 |-----|-------|-----------|----------|------|--------|
 | T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | ✅ done |
 | T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | ✅ done |
-| T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
+| T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | ✅ done (#128) |
 | T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
 | T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | ✅ done |
-| T6  | promtool check/test rules in CI | 3b | Medium | 2 | |
-| T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | |
+| T6  | promtool check/test rules in CI | 3b | Medium | 2 | 🔄 PR #131 open |
+| T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | ✅ done (#129) |
 | T8  | Cache envtest binaries in CI | 5a | Medium | 1 | ✅ done |
 | T9  | Codecov patch status enforcing | 5b | Low — **land last** | 3 | |
 | T10 | synctest / clock-extraction spike | 6a | Experimental | 2 | |
@@ -87,6 +87,22 @@ corrections are load-bearing — task specs below already incorporate them:
 **Waves** (tasks within a wave are parallel-safe; see conflict matrix for exceptions):
 Wave 1: T1, T3, T5, T7, T8, T11 → Wave 2: T2, T4, T6, T10 → Wave 3: T12, then T9 last.
 Deferred: T13 and the e2e k8s-version matrix (optional half of T4).
+
+**Out-of-plan fixes landed alongside this work (not tracked as their own task, noted here
+for context):**
+- **`dist/install.yaml` CRD drift, merged separately (#130).** Verifying T7's
+  `helm-chart-refresh` regen surfaced that `dist/install.yaml` (the kustomize-based install
+  path) had fallen out of sync with `config/crd/bases` since #99 — `interval`/`retryInterval`'s
+  doc comments and pattern (dropped the `[-+]?` sign allowance) were never propagated to it.
+  Fixed by regenerating via `mise run build-installer`; no manual edits.
+- **Missing `events.k8s.io` RBAC, folded into T3's PR (#128).** T3's new failure-path e2e spec
+  caught a real production bug: `recordPersistentFailure`'s `events.EventRecorder` writes
+  through client-go's `EventsV1()` client (the `events.k8s.io` API group), but the manager's
+  ClusterRole only ever granted the legacy core `""` group's `events` resource. Every
+  persistent-failure Warning Event was silently rejected with a 403 in any real cluster — only
+  envtest's non-RBAC-restricted client ever exercised this path successfully. Fixed by adding
+  `+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch` and regenerating
+  RBAC manifests/chart/install.yaml.
 
 ## Dependency notes
 
@@ -225,7 +241,7 @@ changes" above):**
   UTF-8 with U+FFFD rather than erroring — this is the actual wire-payload guarantee that
   matters.
 
-## T3 — Failure-path FeedGroup e2e + fix sample apiVersion
+## T3 — Failure-path FeedGroup e2e + fix sample apiVersion ✅ done
 
 **Why:** `test/e2e/e2e_test.go` deliberately skips reconciliation (mock webhooks would need
 weakening `AllowedWebhookHosts`), but a *failure-path* spec needs no mock at all, and it
@@ -283,6 +299,26 @@ cleanly on the Kind cluster; zero production-code changes.
 
 **Verification:** `mise run test-e2e` ·
 `kubectl apply --dry-run=server -f config/samples/` against the Kind cluster.
+
+**Implementation notes (deviations/findings, PR [#128](https://github.com/maverickd650/rss2discord-operator/pull/128)):**
+- Step 4 (the SSRF-guard-observation second feed) was not taken — out of scope for keeping
+  the PR minimal; flagged as a possible future addition, not required by acceptance criteria.
+- The events assertion fetches all events (`kubectl get events -n <ns> -o json`) and greps
+  the raw output for `FetchFailed` + the note substring, rather than using
+  `--field-selector reason=...` server-side: that event is emitted via `events.EventRecorder`
+  (events.k8s.io/v1), and this couldn't be exercised locally before landing (no container
+  runtime in the sandbox that authored it), so it seemed safer not to bet on field-selector
+  support for that API path sight-unseen.
+- **Sandbox couldn't run `mise run test-e2e` at all** (no `docker`/`podman`/`colima`), so the
+  spec was verified via `go vet -tags=e2e`, `go build`, `mise run test`, `mise run lint`, and
+  a client-side `kubectl apply --dry-run=client` of the generated manifest — CI (which has
+  Docker) was the only real test of the new spec, and it caught a genuine bug on the first
+  push (see next bullet).
+- **CI's first run failed** on the persistent-failure Event assertion timing out with zero
+  events ever created in the test namespace, even though the preceding `Reachable`/`DNSFailure`
+  condition check had already passed. Root cause: missing `events.k8s.io` RBAC (see the
+  out-of-plan-fixes note above) — a real bug this new e2e spec caught that the envtest suite
+  never could. Fixed in a second commit on the same PR; second CI run was green.
 
 ## T4 — Pin the Kind node image ✅ done
 
@@ -383,7 +419,7 @@ dashboard JSON locally makes it fail; adding a dummy `failureClass{...}` literal
   cross-check cleanly both ways under this definition. The dead-regex check still excludes
   `!~` matchers, as originally specified.
 
-## T6 — promtool rule checks in CI
+## T6 — promtool rule checks in CI 🔄 PR [#131](https://github.com/maverickd650/rss2discord-operator/pull/131) open
 
 **Why:** the PrometheusRule's exprs (including the `label_replace` reason extraction) are
 never validated or exercised; a syntax error or broken regex ships silently.
@@ -420,7 +456,34 @@ never validated or exercised; a syntax error or broken regex ships silently.
 
 **Conflicts:** serialize with T8 (same workflow file) and T12 (`[tools]`/`mise.lock`).
 
-## T7 — Chart golden-file snapshot tests
+**Implementation notes (deviations/findings):**
+- `promtool` doesn't need the deprecated ubi backend at all — it's a registered mise
+  registry short name (`promtool`, resolving to the aqua backend against the
+  `prometheus/prometheus` release tarball), so `.mise/config.toml` just pins
+  `promtool = "3.13.0"` like every other `[tools]` entry.
+- **First CI run failed** (`E2E Tests`, `Lint`, `Test` all died in ~7s at the
+  `mise install --locked` step): `mise lock` only writes checksum/URL entries for the
+  platform it ran on, so the locally-generated `mise.lock` entry only had a `macos-arm64`
+  block, and Ubuntu CI runners have no `linux-x64` entry to install from in locked mode.
+  Fixed with `mise lock -p linux-x64,linux-arm64,macos-arm64 promtool`, matching every other
+  `[tools]` entry's three-platform shape — **anyone adding a new `[tools]` entry from a
+  non-Linux machine needs this explicit multi-platform `mise lock` invocation**, not a plain
+  `mise install`, or CI will fail the same way.
+- `promtool` test files resolve `rule_files` entries **relative to the test file's own
+  directory**, not the working directory (confirmed empirically) — so the rendered rules
+  file lives at `test/promrules/rules.yaml` (gitignored, regenerated by the task every run)
+  next to `tests.yaml`, rather than the `$TMPDIR` path in the original sketch.
+- The task's `run` script uses `set -eu`, not `set -euo pipefail`: mise executes TOML `run`
+  scripts via `sh`, which is dash (no `pipefail` support) on the Ubuntu CI runner, confirmed
+  with a throwaway diagnostic task locally. Not load-bearing here — `hack/promrules` already
+  errors on empty/malformed input, and plain `set -e` still catches a failing pipeline via
+  the last command's exit status. (The pre-existing `helm-chart-refresh` task still has
+  `set -euo pipefail`, latent and unexercised since it's never wired into a workflow — not
+  touched here, out of scope, but worth knowing about if that task is ever wired into CI.)
+- `gopkg.in/yaml.v3` (already an indirect dependency) becomes direct since `hack/promrules`
+  imports it; `go.mod`/`go mod tidy` updated accordingly.
+
+## T7 — Chart golden-file snapshot tests ✅ done
 
 **Why:** `mise run helm-chart-refresh` must preserve hand-tuned templates (see CLAUDE.md for
 the list); a refresh regression currently only shows up in `git diff` review. `helm lint`
@@ -461,6 +524,28 @@ as T5/T6.
 leaves goldens passing (this is the actual regression test for the refresh).
 
 **Verification:** `mise run test` · `mise run helm-chart-refresh && go test ./test/chart`.
+
+**Implementation notes (deviations from the steps above, PR [#129](https://github.com/maverickd650/rss2discord-operator/pull/129)):**
+- Scoped to 9 cases covering every specific value permutation in step 2 (manager defaults +
+  metrics-insecure; metrics-service defaults + insecure; ServiceMonitor native-histograms
+  true/false; PrometheusRule enabled; GrafanaDashboard enabled; NetworkPolicy enabled), plus
+  `allow-metrics-traffic.yaml` (NetworkPolicy) as a 6th rendered file alongside the five
+  listed in step 1 — the plan named NetworkPolicy as a permutation to cover without adding
+  its template to the "five contract files" list, so it's included in the golden set here to
+  resolve that gap literally. Didn't add empty-golden cases for "each `*.enabled` flag left
+  at its (disabled) default" — those are trivial (empty rendered output) and add little over
+  the two always-on templates (manager, metrics-service) already covering the "defaults"
+  permutation.
+- `manager.image.tag` is always pinned to a fixed value in the render helper (in addition to
+  scrubbing the `helm.sh/chart` label per step 3): its default otherwise falls back to
+  `Chart.yaml`'s `AppVersion`, which is just as volatile across release-please version bumps
+  as the chart label, and wasn't called out explicitly in step 3's list.
+- Verified `mise run helm-chart-refresh` on a clean tree resurrects a stale,
+  deliberately-deleted `.github/workflows/test-chart.yml` (kubebuilder's helm plugin recreates
+  it when absent) and picks up an unrelated pre-existing `dist/install.yaml` doc-comment
+  drift — both reverted before committing, out of scope for this task. The `install.yaml`
+  drift became its own follow-up fix (see the out-of-plan-fixes note above); the
+  `test-chart.yml` resurrection was flagged as a separate background task, not yet picked up.
 
 ## T8 — Cache envtest binaries in CI ✅ done
 
