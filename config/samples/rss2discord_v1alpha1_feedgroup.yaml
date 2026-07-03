@@ -1,4 +1,4 @@
-apiVersion: rss2discord.rss2discord.maverickd650.dev/v1alpha1
+apiVersion: rss2discord.maverickd650.dev/v1alpha1
 kind: FeedGroup
 metadata:
   labels:
