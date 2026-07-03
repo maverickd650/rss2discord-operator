@@ -18,6 +18,12 @@ kubebuilder = "4.15.0"
 IMG = "{{ env.IMG | default(value='controller:latest') }}"
 KIND_CLUSTER = "{{ env.KIND_CLUSTER | default(value='rss2discord-operator-test-e2e') }}"
 CONTAINER_TOOL = "{{ env.CONTAINER_TOOL | default(value='docker') }}"
+# Digest-pinned so the e2e k8s version doesn't silently drift when the `kind`
+# tool is bumped. Matches k8s.io/api's minor (currently 1.36, see go.mod) and
+# the kind v0.32.0 release notes: https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0
+# Bump together with the `kind` [tools] pin above — Renovate can't see this,
+# since it lives in a task script, not a manifest it understands.
+KIND_NODE_IMAGE = "{{ env.KIND_NODE_IMAGE | default(value='kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5') }}"
 
 ##@ Development
 
@@ -81,7 +87,7 @@ run = '''
 cluster="${KIND_CLUSTER}"
 if ! kind get clusters | grep -qx "$cluster"; then
   echo "Creating Kind cluster '$cluster'..."
-  kind create cluster --name "$cluster"
+  kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE"
 fi
 trap 'kind delete cluster --name "$cluster"' EXIT
 KIND=kind KIND_CLUSTER="$cluster" go test -tags=e2e ./test/e2e/ -v -ginkgo.v

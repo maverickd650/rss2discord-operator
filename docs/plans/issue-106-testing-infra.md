@@ -73,7 +73,7 @@ corrections are load-bearing — task specs below already incorporate them:
 | T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | |
 | T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | |
 | T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
-| T4  | Pin the Kind node image | 2b (part) | Medium | 2 | |
+| T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
 | T5  | Observability contract test (outcomes ↔ dashboard ↔ alerts) | 3a | High | 1 | |
 | T6  | promtool check/test rules in CI | 3b | Medium | 2 | |
 | T7  | Chart golden-file snapshot tests | 4a, 4b | Medium | 1 | |
@@ -254,7 +254,7 @@ cleanly on the Kind cluster; zero production-code changes.
 **Verification:** `mise run test-e2e` ·
 `kubectl apply --dry-run=server -f config/samples/` against the Kind cluster.
 
-## T4 — Pin the Kind node image
+## T4 — Pin the Kind node image ✅ done
 
 **Why:** `[tasks.test-e2e]` runs `kind create cluster` with no `--image`, so the k8s version
 under e2e test silently changes whenever the kind binary is bumped.
