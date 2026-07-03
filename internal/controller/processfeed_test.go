@@ -286,6 +286,50 @@ func TestPermanentBackoffDuration_ClampsRetryCountBelowOne(t *testing.T) {
 	}
 }
 
+// TestFeedInBackoff verifies the active-feeds skip predicate: empty or
+// malformed BackoffUntil values are treated as "not in backoff" so a bad
+// value can never permanently wedge a feed, and the comparison is a strict
+// "now before until".
+func TestFeedInBackoff(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name         string
+		backoffUntil string
+		want         bool
+	}{
+		{name: "empty", backoffUntil: "", want: false},
+		{name: "malformed", backoffUntil: "not-a-timestamp", want: false},
+		{name: "future", backoffUntil: "2026-01-01T00:00:01Z", want: true},
+		{name: "past", backoffUntil: "2025-12-31T23:59:59Z", want: false},
+		{name: "equal to now", backoffUntil: "2026-01-01T00:00:00Z", want: false},
+		{name: "sentinel", backoffUntil: permanentBackoffSentinel, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := feedInBackoff(tc.backoffUntil, now); got != tc.want {
+				t.Errorf("feedInBackoff(%q, %v) = %v, want %v", tc.backoffUntil, now, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNextBackoffUntil verifies the RFC3339 formatting of a computed backoff
+// expiry, and that the result round-trips through feedInBackoff as expected.
+func TestNextBackoffUntil(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	got := nextBackoffUntil(now, 10*time.Minute)
+	want := "2026-01-01T00:10:00Z"
+	if got != want {
+		t.Fatalf("nextBackoffUntil() = %q, want %q", got, want)
+	}
+	if !feedInBackoff(got, now) {
+		t.Fatalf("feedInBackoff(%q, %v) = false, want true (still in the future)", got, now)
+	}
+	if feedInBackoff(got, now.Add(10*time.Minute)) {
+		t.Fatalf("feedInBackoff(%q, %v) = true, want false (backoff expired)", got, now.Add(10*time.Minute))
+	}
+}
+
 // TestProcessFeed_PermanentFetchFailureSetsBackoff asserts a permanent fetch
 // error (HTTP 404) sets BackoffUntil to an exponential offset, returns no
 // wantRetry (the group's normal interval is unaffected), and does not set a
