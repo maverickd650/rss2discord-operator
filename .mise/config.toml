@@ -80,6 +80,25 @@ export KUBEBUILDER_ASSETS="$(setup-envtest use "$k8s_version" --bin-dir "$bin_di
 go test $(go list ./... | grep -v /e2e) -race -coverprofile cover.out
 '''
 
+[tasks.fuzz]
+description = "Run every internal/... Fuzz target with actual mutation (FUZZTIME per target, default 5m; FUZZTIME=10s for a quick local smoke run)"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = '''
+fuzztime="${FUZZTIME:-5m}"
+for pkg in $(go list ./internal/...); do
+  targets="$(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true)"
+  for target in $targets; do
+    echo "=== fuzzing $target ($pkg) for $fuzztime ==="
+    # -run '^$' skips every non-fuzz Test in the package: once a Fuzz target
+    # lands in internal/controller, that package's envtest Ginkgo suite
+    # would otherwise boot as a prerequisite and fail without
+    # KUBEBUILDER_ASSETS. -fuzz only ever accepts one target per invocation,
+    # hence the loop instead of a single glob.
+    go test -run '^$' -fuzz "^${target}\$" -fuzztime "$fuzztime" "$pkg"
+  done
+done
+'''
+
 [tasks.test-e2e]
 description = "Run e2e tests against a Kind cluster (Kind must be installed)"
 depends = ["manifests", "generate", "fmt", "vet"]

@@ -70,7 +70,7 @@ corrections are load-bearing — task specs below already incorporate them:
 
 | ID  | Title | Issue item | Priority | Wave | Status |
 |-----|-------|-----------|----------|------|--------|
-| T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | |
+| T1  | `mise run fuzz` + scheduled fuzz workflow with cumulative corpus | 1a | High | 1 | ✅ done |
 | T2  | Discord + controller sanitization fuzz targets (+ benchmarks) | 1b, 6d | High | 2 | |
 | T3  | Failure-path FeedGroup e2e + fix sample apiVersion | 2a | High | 1 | |
 | T4  | Pin the Kind node image | 2b (part) | Medium | 2 | ✅ done |
@@ -113,7 +113,7 @@ Deferred: T13 and the e2e k8s-version matrix (optional half of T4).
 
 ---
 
-## T1 — `mise run fuzz` task + scheduled fuzz workflow with cumulative corpus
+## T1 — `mise run fuzz` task + scheduled fuzz workflow with cumulative corpus ✅ done
 
 **Why:** `FuzzParseFeed` only ever runs its seed corpus in CI (`mise run test` runs fuzz
 targets as plain tests). Nothing runs with `-fuzz`, so the fuzzer never explores. Feed XML
@@ -154,6 +154,15 @@ reconcile loop.
 after merge, `workflow_dispatch` the workflow once and confirm the corpus cache is saved.
 
 **Constraints reminder:** ground rules 1–3 apply; the fuzz task must not touch guard code.
+
+**Implementation note:** uses `actions/cache/restore` + `actions/cache/save` (split, same SHA
+pin as the combined `actions/cache` action) rather than the combined action, so the corpus
+save step can be pinned to `if: always()` explicitly — verified the corpus cache/save
+behavior isn't left to the combined action's default post-step condition, which the plan's
+"save if: always()" wording doesn't fully specify otherwise. `mise run fuzz`'s shell body
+was verified directly against `internal/rss`'s existing `FuzzParseFeed` target (real mutation
+fuzzing, `FUZZTIME=5s`/`10s`, no crashes, no working-tree changes) since `mise` itself isn't
+installable in this sandbox; the workflow YAML was validated for syntax only.
 
 ## T2 — Discord + controller sanitization fuzz targets, plus `b.Loop` benchmarks
 
