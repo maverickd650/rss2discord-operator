@@ -208,6 +208,18 @@ url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/
 version = "3.13.0"
 backend = "aqua:prometheus/prometheus"
 
+[tools.promtool."platforms.linux-arm64"]
+checksum = "sha256:c11fbff0fde0e357e4cfcf2ec74b83d5475301da7e6777c6d7b6aa6d06a410f7"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-arm64.tar.gz"
+
+[tools.promtool."platforms.linux-x64"]
+checksum = "sha256:744d93324cc024d82089921737bd797474d7f1e5dbbfd1c6b387bad258538cb9"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-amd64.tar.gz"
+
+[tools.promtool."platforms.macos-arm64"]
+checksum = "sha256:151e59d73b28ae9ff1dadee8ffb221f65de0435051597a01e77a3c95b3438269"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.darwin-arm64.tar.gz"
+
 [[tools.setup-envtest]]
 version = "0.24.1"
 backend = "aqua:kubernetes-sigs/controller-runtime/setup-envtest"
