@@ -18,9 +18,27 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// erroringReader always fails, so run's io.ReadAll(in) error branch is
+// reachable without depending on a real stdin failure mode.
+type erroringReader struct{}
+
+func (erroringReader) Read([]byte) (int, error) {
+	return 0, errors.New("simulated read failure")
+}
+
+// erroringWriter always fails, so run's yaml.Encoder error branches
+// (Encode and Close) are reachable without depending on a real stdout
+// failure mode.
+type erroringWriter struct{}
+
+func (erroringWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
 
 func TestRunExtractsSpec(t *testing.T) {
 	input := `apiVersion: monitoring.coreos.com/v1
@@ -64,5 +82,19 @@ func TestRunRejectsInvalidYAML(t *testing.T) {
 	var out bytes.Buffer
 	if err := run(strings.NewReader("not: valid: yaml: at: all:"), &out); err == nil {
 		t.Fatal("run() succeeded on invalid YAML, want an error")
+	}
+}
+
+func TestRunPropagatesReadError(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(erroringReader{}, &out); err == nil {
+		t.Fatal("run() succeeded despite a failing reader, want an error")
+	}
+}
+
+func TestRunPropagatesWriteError(t *testing.T) {
+	input := "spec:\n  groups: []\n"
+	if err := run(strings.NewReader(input), erroringWriter{}); err == nil {
+		t.Fatal("run() succeeded despite a failing writer, want an error")
 	}
 }
