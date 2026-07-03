@@ -274,10 +274,12 @@ spec:
                 default: 30m
                 description: |-
                   interval is the duration between feed checks (e.g., "30m", "1h"),
-                  parsed by Go's time.ParseDuration.
+                  parsed by Go's time.ParseDuration. Must not be negative: a negative or
+                  unreasonably short interval would requeue the FeedGroup in a tight
+                  reconcile loop, hammering every feed host on each pass.
                 maxLength: 32
                 minLength: 1
-                pattern: ^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                 type: string
               retries:
                 default: 3
@@ -289,10 +291,12 @@ spec:
                 default: 5m
                 description: |-
                   retryInterval is the duration between retries (e.g., "5m"), parsed by
-                  Go's time.ParseDuration.
+                  Go's time.ParseDuration. Must not be negative: a negative or
+                  unreasonably short interval would requeue the FeedGroup in a tight
+                  reconcile loop, hammering every feed host on each pass.
                 maxLength: 32
                 minLength: 1
-                pattern: ^[-+]?([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                 type: string
               username:
                 description: |-
