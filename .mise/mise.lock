@@ -7,21 +7,43 @@ backend = "aqua:sigstore/cosign"
 [tools.cosign."platforms.linux-arm64"]
 checksum = "sha256:2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11"
 url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-arm64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442898897"
+provenance = "cosign"
+
+[tools.cosign."platforms.linux-arm64-musl"]
+checksum = "sha256:2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11"
+url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-arm64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442898897"
 provenance = "cosign"
 
 [tools.cosign."platforms.linux-x64"]
 checksum = "sha256:ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"
 url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-amd64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442898812"
+provenance = "cosign"
+
+[tools.cosign."platforms.linux-x64-musl"]
+checksum = "sha256:ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"
+url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-amd64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442898812"
 provenance = "cosign"
 
 [tools.cosign."platforms.macos-arm64"]
 checksum = "sha256:94b42a9e697be95675f6160ab031a9a5f1ec1e646d6f648d7b2f5cd59ececbc5"
 url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-darwin-arm64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442899033"
 provenance = "cosign"
 
 [tools.cosign."platforms.macos-x64"]
 checksum = "sha256:14d2678dfbfde18798151e86fbd91ebdadbb7424b18412a42a155dd8a2df4c7a"
 url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-darwin-amd64"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442899292"
+provenance = "cosign"
+
+[tools.cosign."platforms.windows-x64"]
+checksum = "sha256:9d2c026e667bfd979fa7ba1cab8c4b24d2e73f336ec2d57f7fc72c7e73e5b4b6"
+url = "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-windows-amd64.exe"
+url_api = "https://api.github.com/repos/sigstore/cosign/releases/assets/442899047"
 provenance = "cosign"
 
 [[tools."github:go-gremlins/gremlins"]]
@@ -64,36 +86,36 @@ url = "https://github.com/go-gremlins/gremlins/releases/download/v0.6.0/gremlins
 url_api = "https://api.github.com/repos/go-gremlins/gremlins/releases/assets/325098106"
 
 [[tools.go]]
-version = "1.26.4"
+version = "1.26.5"
 backend = "core:go"
 
 [tools.go."platforms.linux-arm64"]
-checksum = "sha256:ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768"
-url = "https://dl.google.com/go/go1.26.4.linux-arm64.tar.gz"
+checksum = "sha256:fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+url = "https://dl.google.com/go/go1.26.5.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-arm64-musl"]
-checksum = "sha256:ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768"
-url = "https://dl.google.com/go/go1.26.4.linux-arm64.tar.gz"
+checksum = "sha256:fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+url = "https://dl.google.com/go/go1.26.5.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-x64"]
-checksum = "sha256:1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f"
-url = "https://dl.google.com/go/go1.26.4.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.linux-x64-musl"]
-checksum = "sha256:1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f"
-url = "https://dl.google.com/go/go1.26.4.linux-amd64.tar.gz"
+checksum = "sha256:5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+url = "https://dl.google.com/go/go1.26.5.linux-amd64.tar.gz"
 
 [tools.go."platforms.macos-arm64"]
-checksum = "sha256:b62ad2b6d7d2464f12a5bcad7ff47f19d08325773b5efd21610e445a05a9bf53"
-url = "https://dl.google.com/go/go1.26.4.darwin-arm64.tar.gz"
+checksum = "sha256:efb87ff28af9a188d0536ef5d42e63dd52ba8263cd7344a993cc48dd11dedb6a"
+url = "https://dl.google.com/go/go1.26.5.darwin-arm64.tar.gz"
 
 [tools.go."platforms.macos-x64"]
-checksum = "sha256:05dc9b5f9997744520aaebb3d5deaa7c755371aebbfb7f97c2511a9f3367538d"
-url = "https://dl.google.com/go/go1.26.4.darwin-amd64.tar.gz"
+checksum = "sha256:6231d8d3b8f5552ec6cbf6d685bdd5482e1e703214b120e89b3bf0d7bf1ef725"
+url = "https://dl.google.com/go/go1.26.5.darwin-amd64.tar.gz"
 
 [tools.go."platforms.windows-x64"]
-checksum = "sha256:3ca8fb4630b07c419cbdd51f754e31363cfcfb83b3a5354d9e895c90be2cc345"
-url = "https://dl.google.com/go/go1.26.4.windows-amd64.zip"
+checksum = "sha256:97e6b2a833b6d89f9ff17d25419ac0a7e3b482a044e9ab18cdef834bd834fd38"
+url = "https://dl.google.com/go/go1.26.5.windows-amd64.zip"
 
 [[tools.golangci-lint]]
 version = "2.12.2"
@@ -102,21 +124,43 @@ backend = "aqua:golangci/golangci-lint"
 [tools.golangci-lint."platforms.linux-arm64"]
 checksum = "sha256:44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a"
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413470996"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.linux-arm64-musl"]
+checksum = "sha256:44cd40a8c76c86755375adfeea52cfd3533cb43d7bd647771e0ae065e166df3a"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413470996"
 provenance = "github-attestations"
 
 [tools.golangci-lint."platforms.linux-x64"]
 checksum = "sha256:8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553"
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413471054"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.linux-x64-musl"]
+checksum = "sha256:8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413471054"
 provenance = "github-attestations"
 
 [tools.golangci-lint."platforms.macos-arm64"]
 checksum = "sha256:a9c54498731b3128f79e090be6110f3e5fffccc617b08142ed244d4126c73f29"
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413470950"
 provenance = "github-attestations"
 
 [tools.golangci-lint."platforms.macos-x64"]
 checksum = "sha256:f6f06d94b6241521c53d15450c5209b028270bf966f842afb11c030c79f5bc16"
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413470980"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.windows-x64"]
+checksum = "sha256:bd42e3ebc8cb4ececb86941983baaf1dc221bbb04d838e94ce63b49cc91e02bb"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-windows-amd64.zip"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/413471017"
 provenance = "github-attestations"
 
 [[tools.helm]]
@@ -127,7 +171,15 @@ backend = "aqua:helm/helm"
 checksum = "sha256:78803142087a0069fa4b50d3f32a84d3ef25c14d1ee8a40fbccf86a6216d2f36"
 url = "https://get.helm.sh/helm-v4.2.2-linux-arm64.tar.gz"
 
+[tools.helm."platforms.linux-arm64-musl"]
+checksum = "sha256:78803142087a0069fa4b50d3f32a84d3ef25c14d1ee8a40fbccf86a6216d2f36"
+url = "https://get.helm.sh/helm-v4.2.2-linux-arm64.tar.gz"
+
 [tools.helm."platforms.linux-x64"]
+checksum = "sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6"
+url = "https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz"
+
+[tools.helm."platforms.linux-x64-musl"]
 checksum = "sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6"
 url = "https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz"
 
@@ -139,6 +191,10 @@ url = "https://get.helm.sh/helm-v4.2.2-darwin-arm64.tar.gz"
 checksum = "sha256:10c1e36ee8c5f2e2ee25a16599cb03ab74c0953cd889cacb980a49ba4b6574ba"
 url = "https://get.helm.sh/helm-v4.2.2-darwin-amd64.tar.gz"
 
+[tools.helm."platforms.windows-x64"]
+checksum = "sha256:29589dad546f8bcd3a6ad92261fcb4a6c9db4a32f9e4fc4f5212db189553dc60"
+url = "https://get.helm.sh/helm-v4.2.2-windows-amd64.tar.gz"
+
 [[tools.kind]]
 version = "0.32.0"
 backend = "aqua:kubernetes-sigs/kind"
@@ -146,18 +202,37 @@ backend = "aqua:kubernetes-sigs/kind"
 [tools.kind."platforms.linux-arm64"]
 checksum = "sha256:b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d"
 url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442565"
+
+[tools.kind."platforms.linux-arm64-musl"]
+checksum = "sha256:b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d"
+url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442565"
 
 [tools.kind."platforms.linux-x64"]
 checksum = "sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54"
 url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442498"
+
+[tools.kind."platforms.linux-x64-musl"]
+checksum = "sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54"
+url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442498"
 
 [tools.kind."platforms.macos-arm64"]
 checksum = "sha256:dca67911095a110c2b5c36e26df6cac860c602033e456c0db47be498cdef1ebb"
 url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-darwin-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442412"
 
 [tools.kind."platforms.macos-x64"]
 checksum = "sha256:295ac6d0d634c9819c9907df45e3017d1f13166bd13c3404c45e79f7faa47498"
 url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-darwin-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442366"
+
+[tools.kind."platforms.windows-x64"]
+checksum = "sha256:0bcb2d1cfedc1912d664014db716937e8a0e843e91c6807b4db2025dbc8989fa"
+url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-windows-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/436442633"
 
 [[tools.kube-controller-tools]]
 version = "0.21.0"
@@ -168,7 +243,17 @@ checksum = "sha256:1af64bb144658c61f1b61c6392e17d56dd4f7364497625613ff435d7e468f
 url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-arm64"
 url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514955"
 
+[tools.kube-controller-tools."platforms.linux-arm64-musl"]
+checksum = "sha256:1af64bb144658c61f1b61c6392e17d56dd4f7364497625613ff435d7e468f60b"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514955"
+
 [tools.kube-controller-tools."platforms.linux-x64"]
+checksum = "sha256:3ec7994b7a41515a7ad8aef8e517429c0a78060df59d5587ac8662db6a8b035f"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514957"
+
+[tools.kube-controller-tools."platforms.linux-x64-musl"]
 checksum = "sha256:3ec7994b7a41515a7ad8aef8e517429c0a78060df59d5587ac8662db6a8b035f"
 url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-amd64"
 url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514957"
@@ -183,6 +268,11 @@ checksum = "sha256:96fc4e98d7144e37bae90b73631c9dad944ccfb69002fc7c9d1ab448babb2
 url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-darwin-amd64"
 url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514958"
 
+[tools.kube-controller-tools."platforms.windows-x64"]
+checksum = "sha256:a49ec014273de590ea1d898179fe5c07876b4bdb84f6b9b3474fab6dc43c554a"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-windows-amd64.exe"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514953"
+
 [[tools.kubebuilder]]
 version = "4.15.0"
 backend = "aqua:kubernetes-sigs/kubebuilder"
@@ -190,18 +280,32 @@ backend = "aqua:kubernetes-sigs/kubebuilder"
 [tools.kubebuilder."platforms.linux-arm64"]
 checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
 url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
+
+[tools.kubebuilder."platforms.linux-arm64-musl"]
+checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
 
 [tools.kubebuilder."platforms.linux-x64"]
 checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
 url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
+
+[tools.kubebuilder."platforms.linux-x64-musl"]
+checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
 
 [tools.kubebuilder."platforms.macos-arm64"]
 checksum = "sha256:8a8b2806c352f3e0749d315ecea91a352b2ce9321af927fca823a1604bd3530a"
 url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979510"
 
 [tools.kubebuilder."platforms.macos-x64"]
 checksum = "sha256:c1e2fd86b7e2e392cd26b77a72bb9665511435ecdeefb16712820ba5da3e666b"
 url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979533"
 
 [[tools.kubectl]]
 version = "1.36.2"
@@ -211,7 +315,15 @@ backend = "aqua:kubernetes/kubernetes/kubectl"
 checksum = "sha256:c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e"
 url = "https://dl.k8s.io/v1.36.2/bin/linux/arm64/kubectl"
 
+[tools.kubectl."platforms.linux-arm64-musl"]
+checksum = "sha256:c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e"
+url = "https://dl.k8s.io/v1.36.2/bin/linux/arm64/kubectl"
+
 [tools.kubectl."platforms.linux-x64"]
+checksum = "sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+url = "https://dl.k8s.io/v1.36.2/bin/linux/amd64/kubectl"
+
+[tools.kubectl."platforms.linux-x64-musl"]
 checksum = "sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
 url = "https://dl.k8s.io/v1.36.2/bin/linux/amd64/kubectl"
 
@@ -223,6 +335,10 @@ url = "https://dl.k8s.io/v1.36.2/bin/darwin/arm64/kubectl"
 checksum = "sha256:ce6c5e55cd17559e87e4fb5e73ebbbc2511bcf2b695d7a40c1b1461a9817d4b3"
 url = "https://dl.k8s.io/v1.36.2/bin/darwin/amd64/kubectl"
 
+[tools.kubectl."platforms.windows-x64"]
+checksum = "sha256:df04d82234b28ffbdcd36e79d596b85da6e9c736e1a7a55ff6910c648ff47af2"
+url = "https://dl.k8s.io/v1.36.2/bin/windows/amd64/kubectl.exe"
+
 [[tools.kustomize]]
 version = "5.8.1"
 backend = "aqua:kubernetes-sigs/kustomize"
@@ -230,18 +346,37 @@ backend = "aqua:kubernetes-sigs/kustomize"
 [tools.kustomize."platforms.linux-arm64"]
 checksum = "sha256:0953ea3e476f66d6ddfcd911d750f5167b9365aa9491b2326398e289fef2c142"
 url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160971"
+
+[tools.kustomize."platforms.linux-arm64-musl"]
+checksum = "sha256:0953ea3e476f66d6ddfcd911d750f5167b9365aa9491b2326398e289fef2c142"
+url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160971"
 
 [tools.kustomize."platforms.linux-x64"]
 checksum = "sha256:029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
 url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160972"
+
+[tools.kustomize."platforms.linux-x64-musl"]
+checksum = "sha256:029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
+url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160972"
 
 [tools.kustomize."platforms.macos-arm64"]
 checksum = "sha256:8886f8a78474e608cc81234f729fda188a9767da23e28925802f00ece2bab288"
 url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160975"
 
 [tools.kustomize."platforms.macos-x64"]
 checksum = "sha256:ee7cf0c1e3592aa7bb66ba82b359933a95e7f2e0b36e5f53ed0a4535b017f2f8"
 url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160974"
+
+[tools.kustomize."platforms.windows-x64"]
+checksum = "sha256:8ec7f5e815e526d4622c06df0a7793d8cfb6eb1c74f816b46166097fef8b26c6"
+url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_windows_amd64.zip"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160980"
 
 [[tools.promtool]]
 version = "3.13.0"
@@ -250,14 +385,37 @@ backend = "aqua:prometheus/prometheus"
 [tools.promtool."platforms.linux-arm64"]
 checksum = "sha256:c11fbff0fde0e357e4cfcf2ec74b83d5475301da7e6777c6d7b6aa6d06a410f7"
 url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463208079"
+
+[tools.promtool."platforms.linux-arm64-musl"]
+checksum = "sha256:c11fbff0fde0e357e4cfcf2ec74b83d5475301da7e6777c6d7b6aa6d06a410f7"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463208079"
 
 [tools.promtool."platforms.linux-x64"]
 checksum = "sha256:744d93324cc024d82089921737bd797474d7f1e5dbbfd1c6b387bad258538cb9"
 url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463208000"
+
+[tools.promtool."platforms.linux-x64-musl"]
+checksum = "sha256:744d93324cc024d82089921737bd797474d7f1e5dbbfd1c6b387bad258538cb9"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463208000"
 
 [tools.promtool."platforms.macos-arm64"]
 checksum = "sha256:151e59d73b28ae9ff1dadee8ffb221f65de0435051597a01e77a3c95b3438269"
 url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463207275"
+
+[tools.promtool."platforms.macos-x64"]
+checksum = "sha256:c30bcf6b5f606a66b9847d55ade0bef67d18f82025475cc26d6c6e41e0e965ab"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463207202"
+
+[tools.promtool."platforms.windows-x64"]
+checksum = "sha256:8329ae90b4c432005f248deeda3631d9e4e608ae980e061289dbd251b197ba63"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.13.0/prometheus-3.13.0.windows-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/463209623"
 
 [[tools.setup-envtest]]
 version = "0.24.1"
@@ -266,15 +424,34 @@ backend = "aqua:kubernetes-sigs/controller-runtime/setup-envtest"
 [tools.setup-envtest."platforms.linux-arm64"]
 checksum = "sha256:c5d8968ec3f2a120b66bc13bd36f80fe4150c34aae7cc491bf9624c8680296c7"
 url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514276"
+
+[tools.setup-envtest."platforms.linux-arm64-musl"]
+checksum = "sha256:c5d8968ec3f2a120b66bc13bd36f80fe4150c34aae7cc491bf9624c8680296c7"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514276"
 
 [tools.setup-envtest."platforms.linux-x64"]
 checksum = "sha256:a9a78fadfc338a38188332f36863c76877f1c86df1a83d2241d2bfc3935297d2"
 url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514280"
+
+[tools.setup-envtest."platforms.linux-x64-musl"]
+checksum = "sha256:a9a78fadfc338a38188332f36863c76877f1c86df1a83d2241d2bfc3935297d2"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514280"
 
 [tools.setup-envtest."platforms.macos-arm64"]
 checksum = "sha256:7e59a0d526f6946aa2f114d34b2e309639c811f3a4f83d56f37b6e3197c6fdfb"
 url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-darwin-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514281"
 
 [tools.setup-envtest."platforms.macos-x64"]
 checksum = "sha256:3fb17f2b1b0f09b7e5395180bd2bcb1d53bb78d72bb0415106b7ae8bf64e23d0"
 url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-darwin-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514278"
+
+[tools.setup-envtest."platforms.windows-x64"]
+checksum = "sha256:e50f6272ff3c649a57c41eb6cae1957083185a150d1a0cca4061c71430298260"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-windows-amd64.exe"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514277"
