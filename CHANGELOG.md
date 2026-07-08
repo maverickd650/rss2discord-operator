@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.0...v0.11.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **container:** update image golang (f96cc55 → b900de9) ([#141](https://github.com/maverickd650/rss2discord-operator/issues/141)) ([dadc408](https://github.com/maverickd650/rss2discord-operator/commit/dadc408b62116f758d3f578cb4e48e603300ac47))
+* **deps:** update dependency go (1.26.4 → 1.26.5) ([#142](https://github.com/maverickd650/rss2discord-operator/issues/142)) ([5a27be2](https://github.com/maverickd650/rss2discord-operator/commit/5a27be25f2a35168299ef774bfcefb386efe3722))
+
 ## [0.11.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.10.1...v0.11.0) (2026-07-03)
 
 
