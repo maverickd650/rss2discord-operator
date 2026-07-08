@@ -2,7 +2,7 @@
 # these via jdx/mise-action and runs `mise run <task>`, so local == CI.
 # Renovate's native `mise` manager keeps [tools] current.
 [tools]
-go = "1.26.4"
+go = "1.26.5"
 golangci-lint = "2.12.2" # must match the `version:` in .custom-gcl.yml
 kube-controller-tools = "0.21.0"
 kustomize = "5.8.1"
