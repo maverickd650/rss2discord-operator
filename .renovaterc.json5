@@ -1,5 +1,8 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  env: {
+    MISE_TRUSTED_CONFIG_PATHS: "./"
+  },
   extends: [
     "config:recommended",
     "docker:enableMajor",
