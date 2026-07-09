@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.1...v0.11.2) (2026-07-09)
+
+
+### Bug Fixes
+
+* **container:** update image gcr.io/distroless/static (963fa6c → d29e660) ([#146](https://github.com/maverickd650/rss2discord-operator/issues/146)) ([2733cda](https://github.com/maverickd650/rss2discord-operator/commit/2733cda584e4cc3ae72cd97b9d24e9c357237eaf))
+* **container:** update image golang (b900de9 → 079e598) ([#147](https://github.com/maverickd650/rss2discord-operator/issues/147)) ([25ca43b](https://github.com/maverickd650/rss2discord-operator/commit/25ca43b132aa5a8da8ce089ebc966b8bedc96f52))
+
 ## [0.11.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.0...v0.11.1) (2026-07-08)
 
 
