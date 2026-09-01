@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.12.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.2...v0.12.0) (2026-09-01)
+
+
+### Features
+
+* **container:** update image golang (1.26 → 1.27) ([#194](https://github.com/maverickd650/rss2discord-operator/issues/194)) ([8adee4d](https://github.com/maverickd650/rss2discord-operator/commit/8adee4d78ca391f748073860e8ec61201c0137b7))
+* **deps:** update dependency golangci-lint (2.12.2 → 2.13.1) ([#195](https://github.com/maverickd650/rss2discord-operator/issues/195)) ([8450ad9](https://github.com/maverickd650/rss2discord-operator/commit/8450ad979b879ac26cf5cb23883e25a191bcb9b6))
+* **deps:** update dependency kubectl (1.36.2 → 1.37.0) ([#166](https://github.com/maverickd650/rss2discord-operator/issues/166)) ([d0909db](https://github.com/maverickd650/rss2discord-operator/commit/d0909dbc6e4520801987c81b4ea2a09275f9ce31))
+* **deps:** update dependency promtool (3.13.1 → 3.14.0) ([#178](https://github.com/maverickd650/rss2discord-operator/issues/178)) ([f10fef8](https://github.com/maverickd650/rss2discord-operator/commit/f10fef8c1908aee2767ade04eb11c891ab07d166))
+
+
+### Bug Fixes
+
+* **container:** update image gcr.io/distroless/static (d29e660 → f7f8f72) ([#157](https://github.com/maverickd650/rss2discord-operator/issues/157)) ([f0f1a3d](https://github.com/maverickd650/rss2discord-operator/commit/f0f1a3d9f383463db9c3479ecf33c37939a8f4ee))
+* **container:** update image gcr.io/distroless/static (f7f8f72 → 1c2c046) ([#196](https://github.com/maverickd650/rss2discord-operator/issues/196)) ([c9d4f03](https://github.com/maverickd650/rss2discord-operator/commit/c9d4f036204f1c46399f646ca85054480ebcb78e))
+* **container:** update image golang (079e598 → d52df9c) ([#156](https://github.com/maverickd650/rss2discord-operator/issues/156)) ([902a1b3](https://github.com/maverickd650/rss2discord-operator/commit/902a1b37b6d7cab6880b3579f9855438b3ea45e5))
+* **container:** update image golang (ae5a231 → 3aff665) ([#163](https://github.com/maverickd650/rss2discord-operator/issues/163)) ([2976114](https://github.com/maverickd650/rss2discord-operator/commit/2976114e333bb7521ca00833184a5ee73160f70b))
+* **container:** update image golang (d52df9c → ae5a231) ([#158](https://github.com/maverickd650/rss2discord-operator/issues/158)) ([2960d34](https://github.com/maverickd650/rss2discord-operator/commit/2960d343f944384143aa9fa256780c9483b6026f))
+* **deps:** update dependency promtool (3.13.0 → 3.13.1) ([#152](https://github.com/maverickd650/rss2discord-operator/issues/152)) ([a7ce8a2](https://github.com/maverickd650/rss2discord-operator/commit/a7ce8a2b3d81d6c0f9b3f8e7f836c3c26ac9a651))
+
 ## [0.11.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.1...v0.11.2) (2026-07-09)
 
 
