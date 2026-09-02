@@ -4,7 +4,7 @@
 [tools]
 go = "1.26.5"
 golangci-lint = "2.13.1" # must match the `version:` in .custom-gcl.yml
-kube-controller-tools = "0.21.0"
+kube-controller-tools = "v0.22.0"
 kustomize = "5.8.1"
 setup-envtest = "0.24.1" # tracks sigs.k8s.io/controller-runtime in go.mod
 helm = "4.2.3"
