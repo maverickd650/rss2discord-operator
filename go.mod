@@ -1,6 +1,7 @@
 module github.com/maverickd650/rss2discord-operator
 
 go 1.26.4
+toolchain go1.27.1
 
 require (
 	github.com/onsi/ginkgo/v2 v2.32.1
