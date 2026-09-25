@@ -418,40 +418,40 @@ url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/promet
 url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519112702"
 
 [[tools.setup-envtest]]
-version = "0.24.1"
+version = "0.25.1"
 backend = "aqua:kubernetes-sigs/controller-runtime/setup-envtest"
 
 [tools.setup-envtest."platforms.linux-arm64"]
-checksum = "sha256:c5d8968ec3f2a120b66bc13bd36f80fe4150c34aae7cc491bf9624c8680296c7"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514276"
+checksum = "sha256:91df5abb84e60b8e20fe9d40e86beaabb49b176a1ed77a13e6caa06d7b0acf6c"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315193"
 
 [tools.setup-envtest."platforms.linux-arm64-musl"]
-checksum = "sha256:c5d8968ec3f2a120b66bc13bd36f80fe4150c34aae7cc491bf9624c8680296c7"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514276"
+checksum = "sha256:91df5abb84e60b8e20fe9d40e86beaabb49b176a1ed77a13e6caa06d7b0acf6c"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315193"
 
 [tools.setup-envtest."platforms.linux-x64"]
-checksum = "sha256:a9a78fadfc338a38188332f36863c76877f1c86df1a83d2241d2bfc3935297d2"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514280"
+checksum = "sha256:531726d9a1d9e4c5661e22ab90186e186f5dbebbc109b13333fa7e237068f06d"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315190"
 
 [tools.setup-envtest."platforms.linux-x64-musl"]
-checksum = "sha256:a9a78fadfc338a38188332f36863c76877f1c86df1a83d2241d2bfc3935297d2"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-linux-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514280"
+checksum = "sha256:531726d9a1d9e4c5661e22ab90186e186f5dbebbc109b13333fa7e237068f06d"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315190"
 
 [tools.setup-envtest."platforms.macos-arm64"]
-checksum = "sha256:7e59a0d526f6946aa2f114d34b2e309639c811f3a4f83d56f37b6e3197c6fdfb"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-darwin-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514281"
+checksum = "sha256:6110a436b854b205eb3771c72622fcbec17ffffea6c3fca64f8c2ebb2e780053"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-darwin-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315192"
 
 [tools.setup-envtest."platforms.macos-x64"]
-checksum = "sha256:3fb17f2b1b0f09b7e5395180bd2bcb1d53bb78d72bb0415106b7ae8bf64e23d0"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-darwin-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514278"
+checksum = "sha256:f1cf04940d7d686c0c32fc755e08e4d4833c129f9d3dcd07a45df495567a9024"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-darwin-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315195"
 
 [tools.setup-envtest."platforms.windows-x64"]
-checksum = "sha256:e50f6272ff3c649a57c41eb6cae1957083185a150d1a0cca4061c71430298260"
-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.24.1/setup-envtest-windows-amd64.exe"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/418514277"
+checksum = "sha256:48765fac6b80a22eadc5a384b37ad2ae46c28fa9cb10e3ab625c4afe38276c61"
+url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v0.25.1/setup-envtest-windows-amd64.exe"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-runtime/releases/assets/562315191"
