@@ -379,43 +379,43 @@ url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/
 url_api = "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/assets/353160980"
 
 [[tools.promtool]]
-version = "3.14.0"
+version = "3.15.0"
 backend = "aqua:prometheus/prometheus"
 
 [tools.promtool."platforms.linux-arm64"]
-checksum = "sha256:077f3781ab7245dc04c9a3c9b78ba120fc8e41aa0dc97489b0af67247e50ba83"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519110559"
+checksum = "sha256:f1f90ec08e849d494ca66c611470afc50192f0355f1a61c33f2cbde02d067823"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587862303"
 
 [tools.promtool."platforms.linux-arm64-musl"]
-checksum = "sha256:077f3781ab7245dc04c9a3c9b78ba120fc8e41aa0dc97489b0af67247e50ba83"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519110559"
+checksum = "sha256:f1f90ec08e849d494ca66c611470afc50192f0355f1a61c33f2cbde02d067823"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587862303"
 
 [tools.promtool."platforms.linux-x64"]
-checksum = "sha256:f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-amd64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519110475"
+checksum = "sha256:2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587862123"
 
 [tools.promtool."platforms.linux-x64-musl"]
-checksum = "sha256:f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.linux-amd64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519110475"
+checksum = "sha256:2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587862123"
 
 [tools.promtool."platforms.macos-arm64"]
-checksum = "sha256:a9623f7f4fe65b1b171b423c1a72bbf23dfdf41a171dcb33e7dd302af80dc01c"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.darwin-arm64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519109748"
+checksum = "sha256:920df4d17e78b3b0175af144eb318b0c74d1cf7b1d1251b326966f0e81977260"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587860828"
 
 [tools.promtool."platforms.macos-x64"]
-checksum = "sha256:a14307b9726e66cadb81be9a544732623af26dabeb7702c987aa9c3c062ada34"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.darwin-amd64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519109663"
+checksum = "sha256:2d79e744c2d7e505db936fbc898e05abc74fcb6e437c25befd26e9c9f00aa58b"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587860719"
 
 [tools.promtool."platforms.windows-x64"]
-checksum = "sha256:272bcdd15d9327c7b1e08fe916ea48633819f82f2ea0bf354e6b8c0350c156ba"
-url = "https://github.com/prometheus/prometheus/releases/download/v3.14.0/prometheus-3.14.0.windows-amd64.tar.gz"
-url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/519112702"
+checksum = "sha256:c9587293dc06aea91a72ae5167bc66f12c5f51e87c06802e1b0c7bf69b26dee9"
+url = "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.windows-amd64.tar.gz"
+url_api = "https://api.github.com/repos/prometheus/prometheus/releases/assets/587864511"
 
 [[tools.setup-envtest]]
 version = "0.24.1"
