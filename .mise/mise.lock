@@ -274,38 +274,38 @@ url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.
 url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514953"
 
 [[tools.kubebuilder]]
-version = "4.15.0"
+version = "4.16.0"
 backend = "aqua:kubernetes-sigs/kubebuilder"
 
 [tools.kubebuilder."platforms.linux-arm64"]
-checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
+checksum = "sha256:6833432c8faab62d2ca6b583f32c88b0a3d1b7264562739c202084c996a55845"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787208"
 
 [tools.kubebuilder."platforms.linux-arm64-musl"]
-checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
+checksum = "sha256:6833432c8faab62d2ca6b583f32c88b0a3d1b7264562739c202084c996a55845"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787208"
 
 [tools.kubebuilder."platforms.linux-x64"]
-checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
+checksum = "sha256:539984e58832044f2326b1bb940c1eaf784f1849e65d06d3a4a4a8b5dfac7ca7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787205"
 
 [tools.kubebuilder."platforms.linux-x64-musl"]
-checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
+checksum = "sha256:539984e58832044f2326b1bb940c1eaf784f1849e65d06d3a4a4a8b5dfac7ca7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787205"
 
 [tools.kubebuilder."platforms.macos-arm64"]
-checksum = "sha256:8a8b2806c352f3e0749d315ecea91a352b2ce9321af927fca823a1604bd3530a"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979510"
+checksum = "sha256:69f5e207cf35193c78546b0e6dccfc42c44b24ceba81d3e22bab453ae118c328"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_darwin_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787206"
 
 [tools.kubebuilder."platforms.macos-x64"]
-checksum = "sha256:c1e2fd86b7e2e392cd26b77a72bb9665511435ecdeefb16712820ba5da3e666b"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979533"
+checksum = "sha256:110d913c131d8eb41000b573d73e62c75777bbddeaea61626ed06d7fecad7ac7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_darwin_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787203"
 
 [[tools.kubectl]]
 version = "1.37.0"
