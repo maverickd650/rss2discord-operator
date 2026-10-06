@@ -7,6 +7,7 @@
 cmd/main.go                    Manager entry (registers controllers/webhooks)
 api/<version>/*_types.go       CRD schemas (+kubebuilder markers)
 api/<version>/zz_generated.*   Auto-generated (DO NOT EDIT)
+api/<version>/applyconfiguration/  Generated SSA ApplyConfigurations (DO NOT EDIT)
 internal/controller/*          Reconciliation logic
 internal/webhook/*             Validation/defaulting (if present)
 config/crd/bases/*             Generated CRDs (DO NOT EDIT)
@@ -61,6 +62,7 @@ Three internal packages do the real work:
 - `config/rbac/role.yaml` - from `mise run manifests`
 - `config/webhook/manifests.yaml` - from `mise run manifests`
 - `**/zz_generated.*.go` - from `mise run generate`
+- `api/*/applyconfiguration/**` - from `mise run generate` (server-side-apply types used by `applyStatus`)
 - `PROJECT` - from `kubebuilder [OPTIONS]`
 
 ### Never Remove Scaffold Markers

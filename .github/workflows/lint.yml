@@ -33,11 +33,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: bin/golangci-lint-custom
-          key: ${{ runner.os }}-golangci-lint-custom-${{ hashFiles('.custom-gcl.yml') }}
+          # .mise/config.toml pins the Go toolchain the binary is built with; a
+          # binary built by an older Go refuses to lint a module whose go
+          # directive is newer, so a toolchain bump must invalidate this cache.
+          key: ${{ runner.os }}-golangci-lint-custom-${{ hashFiles('.custom-gcl.yml', '.mise/config.toml') }}
 
       - name: Mark restored binary fresh
         # mise's `golangci-lint-custom` task skips rebuilding when its output is newer
-        # than .custom-gcl.yml; checkout always gives that file a fresh mtime, so without
+        # than its sources (.custom-gcl.yml, .mise/config.toml); checkout always gives those a fresh mtime, so without
         # this the cache hit would still trigger a rebuild every run.
         if: steps.golangci-lint-custom-cache.outputs.cache-hit == 'true'
         run: touch bin/golangci-lint-custom

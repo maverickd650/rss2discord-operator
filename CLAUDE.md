@@ -25,7 +25,7 @@ codegen, envtest assets, and the custom lint binary).
 - `mise run build` — build manager binary to `bin/manager`.
 - `mise run run` — run the controller locally against the current kubeconfig context.
 - `mise run manifests` — regenerate CRDs + RBAC from `+kubebuilder` markers.
-- `mise run generate` — regenerate `zz_generated.deepcopy.go`.
+- `mise run generate` — regenerate `zz_generated.deepcopy.go` and the server-side-apply types in `api/v1alpha1/applyconfiguration/`.
 - `mise run helm-chart-refresh` — regenerate `dist/chart/` from `config/` (kubebuilder's `helm/v2-alpha` plugin), preserving this chart's hand-tuned templates. Run after CRD/RBAC/manager changes; see AGENTS.md for what it preserves and why.
 
 Run a single test (after `mise run manifests generate` so codegen is current):
@@ -52,6 +52,8 @@ Cross-cutting designs that span multiple files (change these carefully):
 
 - **Per-feed status is a slice, not maps.** `FeedGroup.Status.Feeds []FeedStatus` (keyed by `rssUrl`); each struct holds `LastChecked`/`LastSeenEntry`/`LastSent`/`LastError`/`ETag`/`LastModified`/`RetryCount`/`Conditions` together. `ensureFeedStatuses` rebuilds the slice every reconcile (in `Spec.Feeds` order), initializing new feeds and pruning removed ones in one pass; `feedStatusFor` looks one up by URL. New per-feed state goes on `FeedStatus`, not a new parallel map.
 
+- **Status is written with server-side apply.** `applyStatus` converts `FeedGroup.Status` to the generated `api/v1alpha1/applyconfiguration` types and calls `Status().Apply` as field owner `feedgroup-controller`. After changing `FeedGroupStatus`/`FeedStatus`, run `mise run generate` — `TestStatusApplyConfigurationCoversEveryField` fails if the apply configuration is stale (a missing field would otherwise be silently dropped from every status write).
+
 - **Metrics use a single outcome label.** Every fetch/send attempt increments `feedOperationsTotal` with exactly one `outcome` (`outcomeSent`, `outcomeFetchError`, `outcomeSendError`, `outcomeRenderError`, `outcomeRateLimited`). `fetch_error`/`send_error` are sub-classified by cause in `classify.go` (e.g. `fetch_error_not_found`) — `outcomeFetchError`/`outcomeSendError` are only ever label *prefixes*, never recorded raw. The Grafana dashboard (`dist/chart/dashboards/feedgroup-overview.json`) and PrometheusRule alerts match these with anchored regexes, so a new outcome usually needs a dashboard panel/alert too.
 
 - **Failure classification → status conditions.** `classify.go` maps an error to a `failureClass`: a Prometheus-safe `metricReason`, a CamelCase `conditionReason` (e.g. `HTTP404`), and a `permanent` flag. `conditionReason` becomes the `Reason` on a feed's `Reachable` (fetch) or `Delivered` (render/send) condition; the group-level `FeedReachable` condition summarizes the most common failure — so `kubectl get feedgroup -o yaml` explains *why* a feed is down. Persistent-failure Events fire exactly once when `RetryCount` first reaches the retry limit (`==`, not `>=`), so an ongoing failure doesn't re-fire every reconcile.
@@ -60,7 +62,7 @@ Cross-cutting designs that span multiple files (change these carefully):
 
 ## Do not edit (auto-generated)
 
-`config/crd/bases/*.yaml`, `config/rbac/role.yaml`, `**/zz_generated.*.go` (from `mise run manifests`/`generate`), and `PROJECT` (kubebuilder). Never delete `// +kubebuilder:scaffold:*` markers. Use `kubebuilder create api`/`create webhook` to scaffold — don't hand-create those files. Edit `config/samples/*` (example CRs) freely.
+`config/crd/bases/*.yaml`, `config/rbac/role.yaml`, `**/zz_generated.*.go`, `api/*/applyconfiguration/**` (from `mise run manifests`/`generate`), and `PROJECT` (kubebuilder). Never delete `// +kubebuilder:scaffold:*` markers. Use `kubebuilder create api`/`create webhook` to scaffold — don't hand-create those files. Edit `config/samples/*` (example CRs) freely.
 
 ## Never write bare cross-repo issue/PR references
 

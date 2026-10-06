@@ -16,6 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains API Schema definitions for the rss2discord v1alpha1 API group.
 // +kubebuilder:object:generate=true
+// +kubebuilder:ac:generate=true
 // +groupName=rss2discord.maverickd650.dev
 package v1alpha1
 

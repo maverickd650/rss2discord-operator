@@ -137,12 +137,21 @@
     },
     // --- misc ---
     {
-      description: "Group the Go toolchain version with go.mod's go directive",
-      matchManagers: ["gomod"],
-      matchDepNames: ["go"],
-      matchFileNames: ["go.mod"],
+      // go.mod's go directive, the mise-pinned toolchain CI builds/tests with,
+      // and the golang builder image (Dockerfile, devcontainer) must move
+      // together: grouping only go.mod let the image reach 1.27 while CI and
+      // govulncheck (go-version-file: go.mod) were still on 1.26.
+      description: "Group every Go toolchain pin into a single update",
+      matchDepNames: ["go", "golang"],
+      matchManagers: ["gomod", "mise", "dockerfile", "devcontainer"],
       groupName: "Go toolchain",
       groupSlug: "go-toolchain",
+      // The grouped PR mixes gomod (chore) and docker (fix) updates; pin it to
+      // fix explicitly, since a toolchain/stdlib bump changes the shipped
+      // binary and must cut a release-please release.
+      semanticCommitType: "fix",
+      semanticCommitScope: "go",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
     },
   ],
 }

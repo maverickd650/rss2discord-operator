@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -46,11 +47,11 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/maverickd650/rss2discord-operator/api/v1alpha1"
+	acv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/discord"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
 )
@@ -826,7 +827,7 @@ const statusFieldOwner = "feedgroup-controller"
 // applyStatus persists feedGroup's status via server-side apply rather than
 // a whole-object Status().Update. FeedGroupStatus.Feeds is listType=map,
 // listMapKey=rssUrl, so entries merge (and prune, for feeds no longer sent
-// in the patch) by rssUrl instead of by slice position -- and, more broadly,
+// in the apply) by rssUrl instead of by slice position -- and, more broadly,
 // SSA lets this controller declare itself owner of exactly the status
 // fields it manages instead of unconditionally overwriting the whole
 // subresource, which is what removes the conflict-retry churn Update()
@@ -836,43 +837,42 @@ const statusFieldOwner = "feedgroup-controller"
 // is safe here: there's no other field manager whose fields could be
 // clobbered.
 //
-// kubebuilder doesn't yet scaffold typed apply-configuration generation for
-// custom resources (the newer, non-deprecated Client.Apply/SubResource(...).
-// Apply methods require one), so this patches with the typed FeedGroup
-// object itself via the older client.Apply Patch -- still fully functional,
-// just not the most future-proof form. A real GVK must be set on the object
-// first: a typed object read via Get() has a blank TypeMeta, but SSA's
-// payload (a plain json.Marshal of the object) needs apiVersion/kind to
-// identify the resource, unlike Update()/the strategic-merge-patch paths
-// elsewhere which don't inspect the body's TypeMeta at all.
+// The request body is a generated ApplyConfiguration (api/v1alpha1/
+// applyconfiguration, from `mise run generate`) carrying only name,
+// namespace, apiVersion/kind and status. Unlike patching with the typed
+// object, it never sends managedFields or a resourceVersion, so there's
+// nothing to scrub first and no optimistic-concurrency precondition to
+// trip: field-ownership merging, not "did anything else change first", is
+// what decides whether this write succeeds.
 func (r *FeedGroupReconciler) applyStatus(ctx context.Context, feedGroup *v1alpha1.FeedGroup) error {
-	gvk, err := apiutil.GVKForObject(feedGroup, r.Scheme)
+	status, err := statusApplyConfiguration(&feedGroup.Status)
 	if err != nil {
 		return err
 	}
-	originalTypeMeta := feedGroup.TypeMeta
-	feedGroup.TypeMeta = metav1.TypeMeta{APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind}
-	defer func() { feedGroup.TypeMeta = originalTypeMeta }()
+	return r.Status().Apply(ctx,
+		acv1alpha1.FeedGroup(feedGroup.Name, feedGroup.Namespace).WithStatus(status),
+		client.FieldOwner(statusFieldOwner), client.ForceOwnership)
+}
 
-	// feedGroup was read via Get(), so it carries the object's current
-	// managedFields (populated by etcd/the API server); the API server
-	// rejects an apply request whose body has managedFields set ("metadata.
-	// managedFields must be nil"), so it must be cleared before marshaling.
-	// ResourceVersion is cleared too: leaving the one from Get() in place
-	// would turn this into an optimistic-concurrency-checked write (a
-	// resourceVersion mismatch fails the whole patch), reintroducing exactly
-	// the conflict-retry churn SSA is meant to remove -- field-ownership
-	// merging, not "did anything else change first", is what should decide
-	// whether this write succeeds. Nothing later in this reconcile reads
-	// either field, so there's no need to restore them afterward.
-	feedGroup.ManagedFields = nil
-	feedGroup.ResourceVersion = ""
-
-	//nolint:staticcheck // client.Apply is deprecated in favor of Client.Apply()/SubResource(...).Apply(), which take a
-	// generated ApplyConfiguration type; kubebuilder has no applyconfiguration-gen equivalent for custom resources, and
-	// hand-writing one for FeedGroupStatus's nested Conditions/Feeds shape risks getting the listType=map merge
-	// semantics subtly wrong. Patching with the typed object is still fully functional SSA.
-	return r.Status().Patch(ctx, feedGroup, client.Apply, client.FieldOwner(statusFieldOwner), client.ForceOwnership)
+// statusApplyConfiguration converts status into its generated
+// ApplyConfiguration by round-tripping it through JSON. The two types share
+// field names and json tags by construction (both come from the same
+// FeedGroupStatus definition), so this carries every field across --
+// including ones added later -- without a hand-maintained With*() builder
+// chain that would silently drop a new status field until someone
+// remembered to wire it in. The round trip also preserves omitempty exactly:
+// a field the typed status omits is absent from the apply, so this manager
+// releases it and the API server removes it, just as before.
+func statusApplyConfiguration(status *v1alpha1.FeedGroupStatus) (*acv1alpha1.FeedGroupStatusApplyConfiguration, error) {
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling FeedGroup status: %w", err)
+	}
+	ac := &acv1alpha1.FeedGroupStatusApplyConfiguration{}
+	if err := json.Unmarshal(raw, ac); err != nil {
+		return nil, fmt.Errorf("converting FeedGroup status to an apply configuration: %w", err)
+	}
+	return ac, nil
 }
 
 // jitterDuration adds up to requeueJitterMaxFactor extra to duration when
