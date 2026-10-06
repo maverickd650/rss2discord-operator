@@ -62,13 +62,18 @@ selection is unaffected.
 
 {{/*
 ServiceAccount name to use.
-If serviceAccount.enabled is false and serviceAccount.name is set, use that name.
-Otherwise, use the controller-manager workload name.
+When enabled, use the controller-manager workload name.
+When disabled, use serviceAccount.name if set (use "default" to pick the namespace
+default ServiceAccount); otherwise fall back to the controller-manager workload name,
+i.e. expect a pre-created ServiceAccount with the name the chart would have used. The
+fallback never silently selects the namespace default ServiceAccount, which would grant
+the operator's RBAC to every pod in the namespace that runs under it.
 */}}
 {{- define "rss2discord-operator.serviceAccountName" -}}
-{{- if and (not (.Values.serviceAccount.enabled | default true)) .Values.serviceAccount.name }}
-{{- .Values.serviceAccount.name }}
+{{- $default := include "rss2discord-operator.controllerManagerName" . }}
+{{- if .Values.serviceAccount.enabled }}
+{{- $default }}
 {{- else }}
-{{- include "rss2discord-operator.controllerManagerName" . }}
+{{- .Values.serviceAccount.name | default "" | trim | default $default }}
 {{- end }}
 {{- end }}
