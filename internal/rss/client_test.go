@@ -462,3 +462,60 @@ func TestParseFeed_DefaultBranchFallsBackToAtomAndFails(t *testing.T) {
 		t.Fatal("expected error for malformed non-rss/feed document, got nil")
 	}
 }
+
+func TestGuardDialControl(t *testing.T) {
+	tests := []struct {
+		address string
+		wantErr bool
+	}{
+		{"93.184.216.34:443", false},
+		{"[2606:4700:4700::1111]:443", false},
+		{"127.0.0.1:80", true},
+		{"10.0.0.1:80", true},
+		{"169.254.169.254:80", true},
+		{"[::1]:80", true},
+		{"[::ffff:127.0.0.1]:80", true},
+		{"[::ffff:10.1.2.3]:80", true},
+		{"not-an-address", true},
+	}
+	for _, tt := range tests {
+		err := guardDialControl("tcp", tt.address, nil)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("guardDialControl(%q) error = %v, wantErr %v", tt.address, err, tt.wantErr)
+		}
+		if err != nil && tt.address == "[::ffff:127.0.0.1]:80" && !strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("expected error to name the address, got %v", err)
+		}
+	}
+}
+
+func TestDefaultClient_IgnoresProxyEnvironment(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://203.0.113.1:3128")
+	t.Setenv("HTTPS_PROXY", "http://203.0.113.1:3128")
+	t.Setenv("http_proxy", "http://203.0.113.1:3128")
+	t.Setenv("https_proxy", "http://203.0.113.1:3128")
+
+	c := newDefaultHTTPClient(nil)
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", c.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Fatal("transport must not use a proxy: it would bypass the IP guard")
+	}
+	if tr.IdleConnTimeout == 0 || !tr.ForceAttemptHTTP2 {
+		t.Error("expected transport based on http.DefaultTransport defaults")
+	}
+}
+
+func TestDefaultClient_LoopbackErrorNamesAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(sampleRSS))
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(nil).FetchEntries(t.Context(), srv.URL, CacheValidators{})
+	if err == nil || !strings.Contains(err.Error(), "refusing to connect to non-public address 127.0.0.1") {
+		t.Fatalf("expected non-public address error, got %v", err)
+	}
+}
