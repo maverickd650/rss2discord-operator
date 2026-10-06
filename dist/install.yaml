@@ -850,6 +850,12 @@ spec:
         - --health-probe-bind-address=:8081
         command:
         - /manager
+        env:
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: manager
+              resource: limits.memory
         image: controller:latest
         livenessProbe:
           httpGet:

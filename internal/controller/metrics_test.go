@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
@@ -391,6 +392,35 @@ func TestDeleteFeedGroupMetrics(t *testing.T) {
 		t.Fatalf("reconcile duration sample count after delete = %d, want 0", got)
 	}
 	deleteFeedGroupMetrics(ns, name)
+}
+
+// TestEnsureFeedStatuses_DropsRemovedFeedMetrics confirms that removing a
+// feed from a FeedGroup's spec drops that feed's rss_url series, while the
+// series of feeds still in the spec are kept.
+func TestEnsureFeedStatuses_DropsRemovedFeedMetrics(t *testing.T) {
+	ns, name := "metrics-prune", "fg-prune"
+	const removedURL = "https://removed.example.com/feed.xml"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	feedOperationsTotal.WithLabelValues(ns, name, exampleFeedURL, outcomeSent).Inc()
+	feedOperationsTotal.WithLabelValues(ns, name, removedURL, outcomeSent).Inc()
+
+	feedGroup := &v1alpha1.FeedGroup{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec:       v1alpha1.FeedGroupSpec{Feeds: []v1alpha1.FeedSpec{{RSSUrl: exampleFeedURL}}},
+		Status: v1alpha1.FeedGroupStatus{Feeds: []v1alpha1.FeedStatus{
+			{RSSUrl: exampleFeedURL},
+			{RSSUrl: removedURL},
+		}},
+	}
+	ensureFeedStatuses(feedGroup)
+
+	if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, removedURL, outcomeSent)); got != 0 {
+		t.Fatalf("removed feed's series = %v, want 0 (dropped)", got)
+	}
+	if got := testutil.ToFloat64(feedOperationsTotal.WithLabelValues(ns, name, exampleFeedURL, outcomeSent)); got != 1 {
+		t.Fatalf("kept feed's series = %v, want 1", got)
+	}
 }
 
 // reconcileDurationSampleCount reads the observation count of a single

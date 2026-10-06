@@ -89,6 +89,15 @@ spec:
         {{- end }}
         command:
         - /manager
+        env:
+        # Let the Go GC see the container memory limit. Up to 10 concurrent
+        # fetches per reconcile each buffer a feed body of up to 10MB, so
+        # without this the heap can grow past a small limit before GC runs.
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: manager
+              resource: limits.memory
         image: "{{ .Values.manager.image.repository | default "controller" }}{{- if not (contains "@" (.Values.manager.image.repository | default "controller")) }}:{{ .Values.manager.image.tag | default .Chart.AppVersion }}{{- end }}"
         {{- with .Values.manager.image.pullPolicy }}
         imagePullPolicy: {{ . }}

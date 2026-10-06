@@ -180,6 +180,15 @@ func deleteFeedGroupMetrics(namespace, name string) {
 	feedGroupReconcileDuration.DeletePartialMatch(labels)
 }
 
+// deleteFeedMetrics drops every series for a single feed within a FeedGroup,
+// for a feed removed from the group's spec. Only feedOperationsTotal carries
+// labelFeedURL; the other vectors are per-FeedGroup.
+func deleteFeedMetrics(namespace, name, rssURL string) {
+	feedOperationsTotal.DeletePartialMatch(prometheus.Labels{
+		labelNamespace: namespace, labelName: name, labelFeedURL: rssURL,
+	})
+}
+
 func init() {
 	metrics.Registry.MustRegister(
 		feedOperationsTotal,
