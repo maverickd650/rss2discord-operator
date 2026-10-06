@@ -59,10 +59,22 @@ var helmChartLabelPattern = regexp.MustCompile(`helm\.sh/chart: \S+`)
 // a RoleBinding subject's "- kind: ServiceAccount").
 var serviceAccountKindPattern = regexp.MustCompile(`(?m)^kind: ServiceAccount$`)
 
+// blankLinesBeforeSeparatorPattern matches a newline, any blank or
+// whitespace-only lines, and a "---" separator line.
+var blankLinesBeforeSeparatorPattern = regexp.MustCompile(`\n(?:[ \t]*\n)+---\n`)
+
 // normalize strips volatile content from rendered chart output before it's
-// compared against (or written as) a golden file.
+// compared against (or written as) a golden file. Besides the chart version
+// label, it drops blank/whitespace-only lines before a "---" document
+// separator and canonicalizes trailing newlines to exactly one: helm 4.3
+// changed how many blank lines it leaves after some rendered documents, so
+// that whitespace is not a stable part of the output. The golden comparison
+// applies this to the stored golden too, keeping the goldens helm-version
+// agnostic without regenerating them.
 func normalize(rendered string) string {
-	return helmChartLabelPattern.ReplaceAllString(rendered, "helm.sh/chart: SCRUBBED")
+	rendered = helmChartLabelPattern.ReplaceAllString(rendered, "helm.sh/chart: SCRUBBED")
+	rendered = blankLinesBeforeSeparatorPattern.ReplaceAllString(rendered, "\n---\n")
+	return strings.TrimRight(rendered, "\n") + "\n"
 }
 
 // renderChartTemplate runs `helm template`, scoped with -s to a single
@@ -220,11 +232,11 @@ func TestChartGolden(t *testing.T) {
 				t.Fatalf("failed to read golden file %s (run `go test ./test/chart -update` to create it): %v",
 					goldenPath, err)
 			}
-			if got != string(want) {
+			if wantNorm := normalize(string(want)); got != wantNorm {
 				t.Errorf("rendered output for %s does not match %s.\n"+
 					"If this is an intentional chart change, run `go test ./test/chart -update` "+
 					"and review the golden diff.\n--- got ---\n%s\n--- want ---\n%s",
-					tc.showOnly, goldenPath, got, string(want))
+					tc.showOnly, goldenPath, got, wantNorm)
 			}
 		})
 	}
