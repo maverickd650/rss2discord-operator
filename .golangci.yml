@@ -42,6 +42,11 @@ linters:
     modernize:
       disable:
         - omitzero
+        # Go 1.27's embedlit rewrites `ObjectMeta: metav1.ObjectMeta{Name: ...}`
+        # to promoted-field keys (`Name: ...`). Legal, but it breaks with the
+        # universal Kubernetes literal idiom (and kubebuilder scaffolds) for
+        # no behavioral gain.
+        - embedlit
   exclusions:
     generated: lax
     rules:

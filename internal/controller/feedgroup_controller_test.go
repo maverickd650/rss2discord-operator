@@ -2585,6 +2585,14 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(updated.ResourceVersion).NotTo(Equal(fgB.ResourceVersion))
 
+			By("Verifying the write was recorded as an Apply on the status subresource by this controller")
+			Expect(updated.ManagedFields).To(ContainElement(SatisfyAll(
+				HaveField("Manager", statusFieldOwner),
+				HaveField("Operation", metav1.ManagedFieldsOperationApply),
+				HaveField("Subresource", "status"),
+			)))
+			Expect(updated.Status.Feeds).To(ConsistOf(HaveField("RSSUrl", "https://example.com/ssa-concurrent.xml")))
+
 			By("Applying status computed from the second, now-stale copy -- must not fail with a conflict")
 			ensureFeedStatuses(fgB)
 			fgB.Status.ObservedGeneration = fgB.Generation
