@@ -143,15 +143,22 @@ func newDefaultHTTPClient(wrap func(http.RoundTripper) http.RoundTripper) *http.
 		Control: guardDialControl,
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	// The clone inherits ProxyFromEnvironment. With a proxy the dialer only
-	// ever connects to the proxy, so the IP guard would never see the real
-	// target: an attacker-chosen feed URL could reach internal hosts via the
-	// proxy. Never use one.
-	transport.Proxy = nil
-	transport.DialContext = dialer.DialContext
-	transport.MaxIdleConnsPerHost = 10
-	transport.ResponseHeaderTimeout = defaultTimeout
+	// Built explicitly (mirroring http.DefaultTransport's tuning) rather than
+	// cloned from the global, so nothing that replaces http.DefaultTransport
+	// can change or break the guarded transport. Proxy is deliberately left
+	// nil: with a proxy the dialer only ever connects to the proxy, so the IP
+	// guard would never see the real target and an attacker-chosen feed URL
+	// could reach internal hosts via the proxy.
+	transport := &http.Transport{
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: defaultTimeout,
+	}
 
 	var rt http.RoundTripper = transport
 	if wrap != nil {

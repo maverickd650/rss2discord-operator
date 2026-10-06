@@ -504,7 +504,7 @@ func TestDefaultClient_IgnoresProxyEnvironment(t *testing.T) {
 		t.Fatal("transport must not use a proxy: it would bypass the IP guard")
 	}
 	if tr.IdleConnTimeout == 0 || !tr.ForceAttemptHTTP2 {
-		t.Error("expected transport based on http.DefaultTransport defaults")
+		t.Error("expected idle-conn timeout and HTTP/2 to be configured")
 	}
 }
 
