@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/html/charset"
@@ -123,32 +124,39 @@ func NewClientWithTransportWrap(wrap func(http.RoundTripper) http.RoundTripper) 
 	return &Client{httpClient: newDefaultHTTPClient(wrap)}
 }
 
-// newDefaultHTTPClient returns a client with an explicit timeout and a
-// DialContext that rejects connections to loopback, link-local, private, and
-// other non-public IP ranges. Feed URLs are supplied by namespace users via
-// the FeedGroup CRD, so without this guard the controller can be used as an
-// SSRF proxy into the cluster network or cloud metadata endpoints. If wrap is
+// newDefaultHTTPClient returns a client with an explicit timeout and a dialer
+// that rejects connections to loopback, link-local, private, and other
+// non-public IP ranges. Feed URLs are supplied by namespace users via the
+// FeedGroup CRD, so without this guard the controller can be used as an SSRF
+// proxy into the cluster network or cloud metadata endpoints. If wrap is
 // non-nil, it wraps the guarded transport (e.g. to add tracing) without
 // replacing it.
+//
+// The check runs in net.Dialer.Control, i.e. against the exact address the
+// socket is about to connect to, after name resolution. That closes the
+// check-then-connect (DNS rebinding) gap a separate lookup would leave, and
+// lets the dialer fall through every resolved address rather than only the
+// first.
 func newDefaultHTTPClient(wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: guardDialControl,
+	}
+
+	// Built explicitly (mirroring http.DefaultTransport's tuning) rather than
+	// cloned from the global, so nothing that replaces http.DefaultTransport
+	// can change or break the guarded transport. Proxy is deliberately left
+	// nil: with a proxy the dialer only ever connects to the proxy, so the IP
+	// guard would never see the real target and an attacker-chosen feed URL
+	// could reach internal hosts via the proxy.
 	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-			if err != nil {
-				return nil, err
-			}
-			for _, ip := range ips {
-				if !isPublicIP(ip) {
-					return nil, fmt.Errorf("refusing to connect to non-public address %s", ip)
-				}
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
-		},
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: defaultTimeout,
 	}
 
@@ -161,6 +169,20 @@ func newDefaultHTTPClient(wrap func(http.RoundTripper) http.RoundTripper) *http.
 		Timeout:   defaultTimeout,
 		Transport: rt,
 	}
+}
+
+// guardDialControl is a net.Dialer Control function that rejects any
+// connection whose resolved remote address is not a public IP.
+func guardDialControl(_, address string, _ syscall.RawConn) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return err
+	}
+	addr := ap.Addr().Unmap()
+	if !isPublicIP(addr) {
+		return fmt.Errorf("refusing to connect to non-public address %s", addr)
+	}
+	return nil
 }
 
 // cgnatBlock is the shared address space carriers use for NAT

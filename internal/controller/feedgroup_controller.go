@@ -1360,15 +1360,17 @@ func truncateMessage(content string, max int) (string, int) {
 }
 
 // pruneLastSent caps a feed's sent-entry dedup map at max entries, dropping
-// the oldest (by recorded RFC3339 send timestamp, which sorts lexically)
-// first. Without this, LastSent grows by one key per sent message forever.
+// the oldest (by recorded RFC3339 send timestamp, which sorts lexically;
+// ties broken by key) first. Without this, LastSent grows by one key per sent message forever.
 func pruneLastSent(sent map[string]string, max int) {
 	if len(sent) <= max {
 		return
 	}
 
 	keys := slices.SortedFunc(maps.Keys(sent), func(a, b string) int {
-		return strings.Compare(sent[a], sent[b])
+		// Timestamps have one-second resolution, so ties are common; break
+		// them on the key so the dropped subset is deterministic.
+		return cmp.Or(strings.Compare(sent[a], sent[b]), strings.Compare(a, b))
 	})
 
 	for _, key := range keys[:len(keys)-max] {
