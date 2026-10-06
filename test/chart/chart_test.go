@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,11 @@ var update = flag.Bool("update", false, "update golden files instead of comparin
 const (
 	chartReleaseName = "chart-golden-test"
 	chartNamespace   = "chart-golden-test-ns"
+
+	managerTemplate   = "templates/manager/manager.yaml"
+	monitorTemplate   = "templates/prometheus/controller-manager-metrics-monitor.yaml"
+	prometheusEnabled = "prometheus.enabled=true"
+	saDisabled        = "serviceAccount.enabled=false"
 )
 
 // helmChartLabelPattern matches the helm.sh/chart label's value, which
@@ -48,6 +54,10 @@ const (
 // golden comparison rather than pinned literally -- otherwise every release
 // PR would spuriously fail this test.
 var helmChartLabelPattern = regexp.MustCompile(`helm\.sh/chart: \S+`)
+
+// serviceAccountKindPattern matches a top-level ServiceAccount document (not
+// a RoleBinding subject's "- kind: ServiceAccount").
+var serviceAccountKindPattern = regexp.MustCompile(`(?m)^kind: ServiceAccount$`)
 
 // normalize strips volatile content from rendered chart output before it's
 // compared against (or written as) a golden file.
@@ -65,6 +75,19 @@ func normalize(rendered string) string {
 // under) provides helm via mise.
 func renderChartTemplate(t *testing.T, showOnly string, setValues ...string) string {
 	t.Helper()
+	out, err := runHelmTemplate(t, showOnly, setValues...)
+	if err != nil {
+		t.Fatalf("helm template -s %s failed: %v\n%s", showOnly, err, out)
+	}
+	return normalize(out)
+}
+
+// runHelmTemplate does the shared work of renderChartTemplate and returns
+// helm's combined output plus its error instead of failing the test, so a
+// test can assert on an expected render failure. showOnly may be empty to
+// render the whole chart.
+func runHelmTemplate(t *testing.T, showOnly string, setValues ...string) (string, error) {
+	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Fatalf("helm not found on PATH -- this test requires it (run via `mise run test`, "+
 			"which installs the mise-pinned helm): %v", err)
@@ -75,17 +98,16 @@ func renderChartTemplate(t *testing.T, showOnly string, setValues ...string) str
 	args = append(args,
 		"template", chartReleaseName, chartDir,
 		"--namespace", chartNamespace,
-		"-s", showOnly,
 	)
+	if showOnly != "" {
+		args = append(args, "-s", showOnly)
+	}
 	for _, v := range append([]string{"manager.image.tag=golden-test"}, setValues...) {
 		args = append(args, "--set", v)
 	}
 
 	out, err := exec.Command("helm", args...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("helm template -s %s failed: %v\n%s", showOnly, err, out)
-	}
-	return normalize(string(out))
+	return string(out), err
 }
 
 // TestChartGolden renders each of the chart's hand-tuned files (see
@@ -105,11 +127,11 @@ func TestChartGolden(t *testing.T) {
 		// (flips the --metrics-secure=false arg onto the container).
 		{
 			name:     "manager_defaults",
-			showOnly: "templates/manager/manager.yaml",
+			showOnly: managerTemplate,
 		},
 		{
 			name:      "manager_metrics_insecure",
-			showOnly:  "templates/manager/manager.yaml",
+			showOnly:  managerTemplate,
 			setValues: []string{"metrics.secure=false"},
 		},
 		// controller-manager-metrics-service.yaml: metrics.secure flips the
@@ -129,13 +151,35 @@ func TestChartGolden(t *testing.T) {
 		// block appears at all.
 		{
 			name:      "metrics_monitor_native_histograms_true",
-			showOnly:  "templates/prometheus/controller-manager-metrics-monitor.yaml",
-			setValues: []string{"prometheus.enabled=true", "prometheus.scrapeNativeHistograms=true"},
+			showOnly:  monitorTemplate,
+			setValues: []string{prometheusEnabled, "prometheus.scrapeNativeHistograms=true"},
 		},
 		{
 			name:      "metrics_monitor_native_histograms_false",
-			showOnly:  "templates/prometheus/controller-manager-metrics-monitor.yaml",
-			setValues: []string{"prometheus.enabled=true", "prometheus.scrapeNativeHistograms=false"},
+			showOnly:  monitorTemplate,
+			setValues: []string{prometheusEnabled, "prometheus.scrapeNativeHistograms=false"},
+		},
+		// ServiceMonitor with user-supplied labels/annotations: the
+		// escaped dot in the annotation key must render as
+		// "example.com/owner", and the reserved control-plane label must
+		// keep its original value (the template omits it from the user
+		// map) rather than being overridden or duplicated.
+		{
+			name:     "metrics_monitor_custom_labels_annotations",
+			showOnly: monitorTemplate,
+			setValues: []string{
+				prometheusEnabled,
+				"prometheus.labels.release=kps",
+				`prometheus.annotations.example\.com/owner=team-a`,
+				"prometheus.labels.control-plane=override",
+			},
+		},
+		// manager.yaml with serviceAccount.enabled=false and an explicit
+		// name: the pod must reference that pre-existing ServiceAccount.
+		{
+			name:      "manager_existing_service_account",
+			showOnly:  managerTemplate,
+			setValues: []string{saDisabled, "serviceAccount.name=existing-sa"},
 		},
 		// prometheus-rule.yaml: wholly custom, no kubebuilder equivalent.
 		{
@@ -181,6 +225,33 @@ func TestChartGolden(t *testing.T) {
 					"If this is an intentional chart change, run `go test ./test/chart -update` "+
 					"and review the golden diff.\n--- got ---\n%s\n--- want ---\n%s",
 					tc.showOnly, goldenPath, got, string(want))
+			}
+		})
+	}
+}
+
+// TestChartServiceAccountNameFallback pins the chart's guard for
+// serviceAccount.enabled=false: an unset or blank serviceAccount.name must
+// fall back to the name the chart would have created (a pre-created
+// ServiceAccount), never to an empty serviceAccountName (which Kubernetes
+// silently resolves to the namespace's "default" ServiceAccount), and the
+// chart must not render its own ServiceAccount.
+func TestChartServiceAccountNameFallback(t *testing.T) {
+	const want = "serviceAccountName: " + chartReleaseName + "-rss2discord-operator"
+	for name, setValues := range map[string][]string{
+		"unset": {saDisabled},
+		"blank": {saDisabled, "serviceAccount.name=  "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runHelmTemplate(t, "", setValues...)
+			if err != nil {
+				t.Fatalf("helm template failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, want) {
+				t.Errorf("expected rendered chart to contain %q, got:\n%s", want, out)
+			}
+			if serviceAccountKindPattern.MatchString(out) {
+				t.Errorf("expected no chart-managed ServiceAccount when serviceAccount.enabled=false, got:\n%s", out)
 			}
 		})
 	}

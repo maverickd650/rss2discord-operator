@@ -44,7 +44,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -1505,7 +1504,7 @@ func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			// meant to jump ahead of that backlog rather than wait behind
 			// hundreds of routine retries -- and keeps that guarantee if the
 			// upstream default ever changes.
-			UsePriorityQueue: ptr.To(true),
+			UsePriorityQueue: new(true),
 		}).
 		Complete(r)
 }

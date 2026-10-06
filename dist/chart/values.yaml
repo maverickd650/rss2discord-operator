@@ -27,6 +27,13 @@ manager:
   args:
     - --leader-elect
 
+  ## Health probes.
+  ## The manager serves the liveness (/healthz) and readiness (/readyz) endpoints on this port.
+  ##
+  healthProbe:
+    # Health probe server port
+    port: 8081
+
   ## Image pull secrets
   ##
   # imagePullSecrets:
@@ -126,7 +133,11 @@ serviceAccount:
   # Install default ServiceAccount provided
   enabled: true
 
-  ## Existing ServiceAccount name (only when enabled=false)
+  ## Existing ServiceAccount name (only used when enabled=false)
+  ## Defaults to the name the chart would have created, so pre-create a
+  ## ServiceAccount with that name or set this explicitly.
+  ## Set to "default" to use the namespace default ServiceAccount (this grants
+  ## the operator's RBAC to every pod in the namespace running under it)
   ## Note: When enabled=true, respects nameOverride/fullnameOverride
   ##
   # name: ""
@@ -169,6 +180,15 @@ certManager:
 ##
 prometheus:
   enabled: false
+
+  ## Custom ServiceMonitor labels
+  ##
+  # labels: {}
+
+  ## Custom ServiceMonitor annotations
+  ##
+  # annotations: {}
+
   ## Scrape every rss2discord_* histogram (feed_request_duration_seconds,
   ## feedgroup_reconcile_duration_seconds, message_overflow_chars) as a
   ## native histogram. These metrics are exported native-only -- no classic
