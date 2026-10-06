@@ -235,77 +235,77 @@ url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-wi
 url_api = "https://api.github.com/repos/kubernetes-sigs/kind/releases/assets/531396499"
 
 [[tools.kube-controller-tools]]
-version = "0.21.0"
+version = "0.22.0"
 backend = "github:kubernetes-sigs/controller-tools"
 
 [tools.kube-controller-tools."platforms.linux-arm64"]
-checksum = "sha256:1af64bb144658c61f1b61c6392e17d56dd4f7364497625613ff435d7e468f60b"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514955"
+checksum = "sha256:c5151f30c3a51ddc8d722c18c263b495dae994ca246e9fa8994b1d4c95f3253a"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008620"
 
 [tools.kube-controller-tools."platforms.linux-arm64-musl"]
-checksum = "sha256:1af64bb144658c61f1b61c6392e17d56dd4f7364497625613ff435d7e468f60b"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514955"
+checksum = "sha256:c5151f30c3a51ddc8d722c18c263b495dae994ca246e9fa8994b1d4c95f3253a"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-linux-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008620"
 
 [tools.kube-controller-tools."platforms.linux-x64"]
-checksum = "sha256:3ec7994b7a41515a7ad8aef8e517429c0a78060df59d5587ac8662db6a8b035f"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514957"
+checksum = "sha256:a7d671f0e0da07a67b3a1618a6cab50353dffea5625cd2d8a8b3e18bacb497e6"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008622"
 
 [tools.kube-controller-tools."platforms.linux-x64-musl"]
-checksum = "sha256:3ec7994b7a41515a7ad8aef8e517429c0a78060df59d5587ac8662db6a8b035f"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-linux-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514957"
+checksum = "sha256:a7d671f0e0da07a67b3a1618a6cab50353dffea5625cd2d8a8b3e18bacb497e6"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-linux-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008622"
 
 [tools.kube-controller-tools."platforms.macos-arm64"]
-checksum = "sha256:13ac7abcd90dd2129da972024bea7da5be7df2c5404c8f715010490996f4ab43"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-darwin-arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514954"
+checksum = "sha256:5e0d7c16ed9cc0ae887c02ebf5244a2739495c93eeaa7b20ccdd3abb20a53846"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-darwin-arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008621"
 
 [tools.kube-controller-tools."platforms.macos-x64"]
-checksum = "sha256:96fc4e98d7144e37bae90b73631c9dad944ccfb69002fc7c9d1ab448babb207d"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-darwin-amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514958"
+checksum = "sha256:fa4c4d01cacdc6e2209b71beac16d87d2b3c641866a5ddeb6d8e7dd6ba381f0f"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-darwin-amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008629"
 
 [tools.kube-controller-tools."platforms.windows-x64"]
-checksum = "sha256:a49ec014273de590ea1d898179fe5c07876b4bdb84f6b9b3474fab6dc43c554a"
-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.21.0/controller-gen-windows-amd64.exe"
-url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/413514953"
+checksum = "sha256:7c0522a81340308ec4eaaeca4725299afd25d5aa7ec351a46d2121ff1433ef15"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.22.0/controller-gen-windows-amd64.exe"
+url_api = "https://api.github.com/repos/kubernetes-sigs/controller-tools/releases/assets/541008626"
 
 [[tools.kubebuilder]]
-version = "4.15.0"
+version = "4.16.0"
 backend = "aqua:kubernetes-sigs/kubebuilder"
 
 [tools.kubebuilder."platforms.linux-arm64"]
-checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
+checksum = "sha256:6833432c8faab62d2ca6b583f32c88b0a3d1b7264562739c202084c996a55845"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787208"
 
 [tools.kubebuilder."platforms.linux-arm64-musl"]
-checksum = "sha256:bd99723fc106502f64a3541b9c5b7079bc68961a76df4f465893e311b594d295"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979507"
+checksum = "sha256:6833432c8faab62d2ca6b583f32c88b0a3d1b7264562739c202084c996a55845"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787208"
 
 [tools.kubebuilder."platforms.linux-x64"]
-checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
+checksum = "sha256:539984e58832044f2326b1bb940c1eaf784f1849e65d06d3a4a4a8b5dfac7ca7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787205"
 
 [tools.kubebuilder."platforms.linux-x64-musl"]
-checksum = "sha256:9632ba818c35e10d9664f19090972ee5d667bdffbf4b83c34e8374c5e846afa2"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_linux_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979529"
+checksum = "sha256:539984e58832044f2326b1bb940c1eaf784f1849e65d06d3a4a4a8b5dfac7ca7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_linux_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787205"
 
 [tools.kubebuilder."platforms.macos-arm64"]
-checksum = "sha256:8a8b2806c352f3e0749d315ecea91a352b2ce9321af927fca823a1604bd3530a"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_arm64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979510"
+checksum = "sha256:69f5e207cf35193c78546b0e6dccfc42c44b24ceba81d3e22bab453ae118c328"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_darwin_arm64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787206"
 
 [tools.kubebuilder."platforms.macos-x64"]
-checksum = "sha256:c1e2fd86b7e2e392cd26b77a72bb9665511435ecdeefb16712820ba5da3e666b"
-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.15.0/kubebuilder_darwin_amd64"
-url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/447979533"
+checksum = "sha256:110d913c131d8eb41000b573d73e62c75777bbddeaea61626ed06d7fecad7ac7"
+url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v4.16.0/kubebuilder_darwin_amd64"
+url_api = "https://api.github.com/repos/kubernetes-sigs/kubebuilder/releases/assets/554787203"
 
 [[tools.kubectl]]
 version = "1.37.1"
