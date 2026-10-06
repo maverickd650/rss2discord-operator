@@ -63,6 +63,15 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+        env:
+        # Let the Go GC see the container memory limit. Up to 10 concurrent
+        # fetches per reconcile each buffer a feed body of up to 10MB, so
+        # without this the heap can grow past a small limit before GC runs.
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: manager
+              resource: limits.memory
         image: controller:latest
         name: manager
         ports:

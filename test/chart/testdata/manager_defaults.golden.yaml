@@ -35,6 +35,15 @@ spec:
         - --leader-elect
         command:
         - /manager
+        env:
+        # Let the Go GC see the container memory limit. Up to 10 concurrent
+        # fetches per reconcile each buffer a feed body of up to 10MB, so
+        # without this the heap can grow past a small limit before GC runs.
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              containerName: manager
+              resource: limits.memory
         image: "ghcr.io/maverickd650/rss2discord-operator:golden-test"
         imagePullPolicy: IfNotPresent
         livenessProbe:
@@ -77,4 +86,3 @@ spec:
       terminationGracePeriodSeconds: 10
       volumes:
         []
-

@@ -721,7 +721,8 @@ func (r *FeedGroupReconciler) resolveWebhookURL(ctx context.Context, feedGroup *
 // across reconciles whenever the spec doesn't change, which
 // apiequality.Semantic.DeepEqual (used by requeueWithStatus to skip no-op
 // writes) needs to avoid seeing a reordered-but-otherwise-identical slice as
-// a change.
+// a change. It also drops the rss_url-labeled metric series of any feed it
+// prunes (see deleteFeedMetrics).
 func ensureFeedStatuses(feedGroup *v1alpha1.FeedGroup) {
 	existing := make(map[string]v1alpha1.FeedStatus, len(feedGroup.Status.Feeds))
 	for _, fs := range feedGroup.Status.Feeds {
@@ -738,8 +739,16 @@ func ensureFeedStatuses(feedGroup *v1alpha1.FeedGroup) {
 			fs.LastSent = map[string]string{}
 		}
 		rebuilt = append(rebuilt, fs)
+		delete(existing, feed.RSSUrl)
 	}
 	feedGroup.Status.Feeds = rebuilt
+
+	// Whatever is left in existing was dropped from the spec. Drop its
+	// rss_url-labeled series too, so editing a group's feed list doesn't
+	// leave stale series behind until the whole FeedGroup is deleted.
+	for url := range existing {
+		deleteFeedMetrics(feedGroup.Namespace, feedGroup.Name, url)
+	}
 }
 
 // feedStatusFor returns the FeedStatus for url, which must already exist
