@@ -20,7 +20,7 @@
     {
       customType: "regex",
       description: "Process annotated dependencies",
-      managerFilePatterns: ["/\\.env(?:\\.j2)?$/", "/\\.sh(?:\\.j2)?$/", "/\\.yaml(?:\\.j2)?$/"],
+      managerFilePatterns: ["/\\.env(?:\\.j2)?$/", "/\\.sh(?:\\.j2)?$/", "/\\.yaml(?:\\.j2)?$/", "/^\\.custom-gcl\\.yml$/"],
       matchStrings: [
         // # renovate: datasource=github-releases depName=foo/bar
         // foobar_version: v1.0.0
@@ -151,6 +151,18 @@
       // binary and must cut a release-please release.
       semanticCommitType: "fix",
       semanticCommitScope: "go",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
+    },
+    {
+      // The mise-pinned golangci-lint and the version in .custom-gcl.yml (used
+      // to build the custom lint binary with the logcheck plugin) must match.
+      description: "Group golangci-lint across .mise/config.toml and .custom-gcl.yml",
+      matchDepNames: ["golangci-lint", "golangci/golangci-lint"],
+      matchManagers: ["mise", "custom.regex"],
+      groupName: "golangci-lint",
+      groupSlug: "golangci-lint",
+      semanticCommitType: "ci",
+      semanticCommitScope: "lint",
       commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}}):",
     },
   ],
