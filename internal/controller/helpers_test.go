@@ -291,6 +291,25 @@ func TestLimitCatchUp(t *testing.T) {
 }
 
 func TestPruneLastSent(t *testing.T) {
+	t.Run("ties on timestamp are broken deterministically by key", func(t *testing.T) {
+		const ts = "2024-01-01T00:00:00Z"
+		for range 50 {
+			sent := map[string]string{}
+			for _, k := range []string{"e", "b", "g", "a", "f", "c", "d"} {
+				sent[k] = ts
+			}
+			pruneLastSent(sent, 3)
+			if len(sent) != 3 {
+				t.Fatalf("expected 3 entries, got %d", len(sent))
+			}
+			for _, k := range []string{"e", "f", "g"} {
+				if _, ok := sent[k]; !ok {
+					t.Fatalf("expected %q to be kept, got %v", k, sent)
+				}
+			}
+		}
+	})
+
 	t.Run("under cap unchanged", func(t *testing.T) {
 		sent := map[string]string{"a": "2024-01-01T00:00:00Z", "b": "2024-01-02T00:00:00Z"}
 		pruneLastSent(sent, 5)
