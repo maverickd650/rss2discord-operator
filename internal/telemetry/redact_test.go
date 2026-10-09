@@ -45,12 +45,23 @@ func TestRedactWebhookURL(t *testing.T) {
 			changed: false,
 		},
 		{
-			// Documents current behaviour: a string url.Parse rejects is
-			// returned as-is, so it is not redacted. Not reachable from a
-			// span today -- see the redactWebhookURL doc comment.
-			name:    "unparsable URL returned unchanged",
-			in:      "https://discord.com/api/webhooks/123456789/%zz",
-			want:    "https://discord.com/api/webhooks/123456789/%zz",
+			// url.Parse rejects the bad escape; the regexp fallback still
+			// redacts the token. Not reachable from a span today.
+			name:    "unparsable URL falls back to regexp redaction",
+			in:      "https://discord.com/api/webhooks/123456789/super-secret-token%zz",
+			want:    "https://discord.com/api/webhooks/123456789/REDACTED",
+			changed: true,
+		},
+		{
+			name:    "unparsable URL with trailing path and query",
+			in:      "https://discord.com/api/webhooks/123456789/tok%zz/slack?x=1",
+			want:    "https://discord.com/api/webhooks/123456789/REDACTED/slack?x=1",
+			changed: true,
+		},
+		{
+			name:    "unparsable unrelated URL untouched",
+			in:      "https://example.com/feed%zz",
+			want:    "https://example.com/feed%zz",
 			changed: false,
 		},
 	}

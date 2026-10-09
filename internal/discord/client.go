@@ -212,6 +212,12 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 
 	parsedURL, err := url.ParseRequestURI(c.webhookURL)
 	if err != nil {
+		// *url.Error's Error() embeds the raw URL -- including the webhook
+		// token -- so surface only the underlying reason, as on the
+		// transport-error path below.
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("invalid discord webhook URL: %w", err)
 	}
 	if parsedURL.Scheme != "https" || !AllowedWebhookHosts[strings.ToLower(parsedURL.Hostname())] {
