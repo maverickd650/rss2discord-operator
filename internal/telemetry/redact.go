@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -67,10 +68,20 @@ func (s redactedSpan) Attributes() []attribute.KeyValue {
 // (.../api/webhooks/<id>/<token>[/...]) with a fixed placeholder. Returns
 // the input unchanged (changed=false) if it doesn't look like a Discord
 // webhook URL.
+//
+// A string url.Parse rejects can't reach a span today (both clients reject
+// unparsable URLs before issuing a request, and otelhttp records url.full
+// from the parsed request URL), but as defence in depth it falls back to a
+// regexp that redacts the segment after /webhooks/<id>/.
+// webhookTokenRE matches /webhooks/<id>/<token> and captures everything up to
+// the token, which runs to the next '/', '?', '#' or end of string.
+var webhookTokenRE = regexp.MustCompile(`(/webhooks/[^/?#]+/)[^/?#]+`)
+
 func redactWebhookURL(raw string) (redacted string, changed bool) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return raw, false
+		redacted = webhookTokenRE.ReplaceAllString(raw, "${1}REDACTED")
+		return redacted, redacted != raw
 	}
 
 	segments := strings.Split(strings.Trim(u.Path, "/"), "/")

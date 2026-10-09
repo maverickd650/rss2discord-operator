@@ -222,6 +222,17 @@ func TestSendMessage_RedactsWebhookURLOnTransportError(t *testing.T) {
 	}
 }
 
+func TestSendMessage_RedactsWebhookURLOnParseError(t *testing.T) {
+	c := NewClient("https://discord.com/api/webhooks/123456789/SUPER-SECRET-TOKEN%zz")
+	err := c.SendMessageText(t.Context(), "hello")
+	if err == nil {
+		t.Fatal("expected a parse error, got nil")
+	}
+	if strings.Contains(err.Error(), "SUPER-SECRET-TOKEN") {
+		t.Fatalf("error leaked webhook token: %v", err)
+	}
+}
+
 func TestSendMessage_ClampsCombinedEmbedLength(t *testing.T) {
 	var receivedBody string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
