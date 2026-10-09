@@ -72,6 +72,9 @@ const (
 	// misconfiguration) vs. a per-entry template execution failure.
 	reasonConfigError = "ConfigError"
 	reasonRenderError = "RenderError"
+	// reasonEntrySkipped marks a Delivered condition left behind by an entry
+	// given up on after exhausting retries (see skipEntry).
+	reasonEntrySkipped = "EntrySkipped"
 
 	metricNotFound           = "not_found"
 	metricGone               = "gone"

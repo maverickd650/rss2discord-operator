@@ -49,7 +49,8 @@ type FeedStatusApplyConfiguration struct {
 	// counts as a successful check; a failed fetch does not advance it.
 	LastChecked *string `json:"lastChecked,omitempty"`
 	// lastSeenEntry is the last seen entry identifier (GUID or Link) for
-	// this feed. Used to fetch only new entries after restarts.
+	// this feed. Used to fetch only new entries after restarts. Identifiers
+	// longer than the field limit are stored as "sha256:<hex digest>".
 	LastSeenEntry *string `json:"lastSeenEntry,omitempty"`
 	// lastSent is a map of entry hash to timestamp (RFC3339), tracking
 	// which entries have been sent to Discord to avoid duplicates.
@@ -57,7 +58,7 @@ type FeedStatusApplyConfiguration struct {
 	// lastError is the last error message encountered for this feed, from
 	// whichever of fetch/render/send most recently failed. See Conditions
 	// for a structured, machine-readable breakdown of which stage failed
-	// and why.
+	// and why. Truncated to fit the field limit.
 	LastError *string `json:"lastError,omitempty"`
 	// etag is the ETag header from this feed's last fetch. Sent back as
 	// If-None-Match on the next fetch so an unchanged feed costs a 304
@@ -71,8 +72,9 @@ type FeedStatusApplyConfiguration struct {
 	RetryCount *int32 `json:"retryCount,omitempty"`
 	// backoffUntil is an RFC3339 timestamp before which this feed should not
 	// be fetched again. Set on permanent fetch failures (e.g. HTTP 404) using
-	// exponential backoff starting from Spec.RetryInterval; cleared on the
-	// next successful fetch or when the FeedGroup spec changes. An empty
+	// exponential backoff starting from Spec.RetryInterval, capped at 6h
+	// (the feed keeps being retried at that cadence); cleared on the next
+	// successful fetch or when the FeedGroup spec changes. An empty
 	// string means the feed is not in backoff.
 	BackoffUntil *string `json:"backoffUntil,omitempty"`
 }

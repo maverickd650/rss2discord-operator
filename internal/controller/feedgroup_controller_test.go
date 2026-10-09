@@ -357,11 +357,40 @@ func setUpFeedGroup(ctx context.Context, name, secretName, feedXML string, opts 
 	return discordServer, rssServer, newTestReconciler(discordServer)
 }
 
-// reconcileFeedGroup runs one reconcile of the named FeedGroup in the test namespace.
+// reconcileFeedGroup runs one reconcile of the named FeedGroup in the test
+// namespace, as if a full poll interval had passed since the previous one:
+// feeds checked "just now" are otherwise skipped as not yet due (see
+// feedDue). Use reconcileFeedGroupNow to exercise that gate itself.
 func reconcileFeedGroup(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
+	ageFeedChecks(ctx, name)
+	return reconcileFeedGroupNow(ctx, r, name)
+}
+
+// reconcileFeedGroupNow runs one reconcile without advancing the clock.
+func reconcileFeedGroupNow(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
 	return r.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name, Namespace: testNamespace},
 	})
+}
+
+// ageFeedChecks backdates every feed's LastChecked by an hour, so the next
+// reconcile treats the feed as due for its next poll.
+func ageFeedChecks(ctx context.Context, name string) {
+	GinkgoHelper()
+	var fg rss2discordv1alpha1.FeedGroup
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, &fg); err != nil {
+		return // not created yet / already gone; the reconcile reports it
+	}
+	changed := false
+	for i := range fg.Status.Feeds {
+		if fg.Status.Feeds[i].LastChecked != "" {
+			fg.Status.Feeds[i].LastChecked = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			changed = true
+		}
+	}
+	if changed {
+		Expect(k8sClient.Status().Update(ctx, &fg)).To(Succeed())
+	}
 }
 
 // Helper function to create an RSS feed XML
@@ -488,7 +517,6 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(feedStatusFor(afterFirst, rssServer.URL()).ETag).To(Equal(`"v1"`))
 			lastSeenAfterFirst := feedStatusFor(afterFirst, rssServer.URL()).LastSeenEntry
 			Expect(lastSeenAfterFirst).NotTo(BeEmpty())
-			resourceVersionAfterFirst := afterFirst.ResourceVersion
 
 			By("Running a second reconciliation against the unchanged feed")
 			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -506,9 +534,44 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(feedStatusFor(afterSecond, rssServer.URL()).LastSeenEntry).To(Equal(lastSeenAfterFirst))
 			Expect(feedsWithError(afterSecond)).To(Equal(0))
 			Expect(feedStatusFor(afterSecond, rssServer.URL()).RetryCount).To(Equal(int32(0)))
+		})
 
-			By("Verifying the unchanged-status reconcile skipped the status write entirely")
-			Expect(afterSecond.ResourceVersion).To(Equal(resourceVersionAfterFirst))
+		It("should not refetch a feed that was checked less than one interval ago", func() {
+			const feedGroupName = "test-feedgroup-interval-gate"
+
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-interval-gate", createRSSFeed(
+				testEntry{
+					title:   "Gate Article",
+					link:    "https://example.com/gate-article",
+					pubDate: time.Now().Format(time.RFC1123Z),
+					guid:    "gate-article",
+				},
+			), withRetries("5m", 3))
+
+			_, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			By("Reconciling again immediately, e.g. after an operator restart or an unrelated trigger")
+			_, err = reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(1), "a feed checked moments ago must not be fetched again")
+			Expect(discordServer.MessageCount()).To(Equal(1))
+
+			By("Reconciling part-way through the interval, which must requeue for the remaining time, not a full interval")
+			var fg rss2discordv1alpha1.FeedGroup
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: testNamespace}, &fg)).To(Succeed())
+			feedStatusFor(&fg, rssServer.URL()).LastChecked = time.Now().Add(-20 * time.Minute).UTC().Format(time.RFC3339)
+			Expect(k8sClient.Status().Update(ctx, &fg)).To(Succeed())
+			res, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically("~", 10*time.Minute, 10*time.Second))
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			By("Reconciling once the interval has elapsed")
+			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(2))
 		})
 	})
 
@@ -1117,9 +1180,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying no second persistent-failure Event fires for the same ongoing failure")
+			By("Verifying no second persistent-failure Event fires, and the entry is held (not skipped) since the template is broken for every entry")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(3)))
+			Expect(feedStatusFor(updated, rssServer.URL()).LastSeenEntry).To(BeEmpty())
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
@@ -1547,10 +1611,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			afterFirstReconcile := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirstReconcile)).To(Succeed())
 			feedStatusFor(afterFirstReconcile, rssServer.URL()).BackoffUntil = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+			// Make the feed otherwise due, so only the backoff can be what skips it.
+			feedStatusFor(afterFirstReconcile, rssServer.URL()).LastChecked = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 			Expect(k8sClient.Status().Update(ctx, afterFirstReconcile)).To(Succeed())
 
 			By("Running reconciliation")
-			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
+			_, err = reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying the backed-off feed was not fetched again")

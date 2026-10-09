@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -424,5 +425,73 @@ func TestSendMessage_RespectsTimeout(t *testing.T) {
 	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected timeout-related error, got nil")
+	}
+}
+
+// TestSendMessage_PacesWhenBucketEmpty asserts that a success response
+// reporting an empty bucket (X-RateLimit-Remaining: 0) makes the next send
+// through the same limiter wait for Reset-After rather than hit the server
+// early and get 429'd -- and that it does so without returning an error.
+func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
+	var arrivals []time.Time
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrivals = append(arrivals, time.Now())
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset-After", "0.2")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	AllowedWebhookHosts["127.0.0.1"] = true
+	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+
+	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
+	for _, text := range []string{"one", "two"} {
+		if err := c.SendMessageText(t.Context(), text); err != nil {
+			t.Fatalf("send %q: %v", text, err)
+		}
+	}
+	if len(arrivals) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(arrivals))
+	}
+	if gap := arrivals[1].Sub(arrivals[0]); gap < 150*time.Millisecond {
+		t.Fatalf("second send arrived %v after the first, want it paced to ~200ms", gap)
+	}
+}
+
+// TestSendMessage_LongResetBecomesCooldown asserts a bucket that won't refill
+// within maxPaceWait is surfaced as a RateLimitError instead of blocking.
+func TestSendMessage_LongResetBecomesCooldown(t *testing.T) {
+	var requests int
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset-After", "30")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	AllowedWebhookHosts["127.0.0.1"] = true
+	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+
+	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
+	if err := c.SendMessageText(t.Context(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := errors.AsType[*RateLimitError](c.SendMessageText(t.Context(), "two")); !ok {
+		t.Fatal("expected *RateLimitError for a reset beyond maxPaceWait")
+	}
+	if requests != 1 {
+		t.Fatalf("expected the second send to be short-circuited, got %d requests", requests)
+	}
+}
+
+// TestRateLimiterWait_ContextCancel asserts a paced wait ends when the
+// caller's context does.
+func TestRateLimiterWait_ContextCancel(t *testing.T) {
+	l := NewRateLimiter()
+	l.pace(testWebhookURL, time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := l.wait(ctx, testWebhookURL); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait() = %v, want context.DeadlineExceeded", err)
 	}
 }

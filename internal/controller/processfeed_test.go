@@ -17,14 +17,22 @@ limitations under the License.
 package controller
 
 import (
+	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	v1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	"github.com/maverickd650/rss2discord-operator/internal/rss"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 )
+
+// testReconcileTime is the fixed "now" string handed to processFeed in tests.
+const testReconcileTime = "2026-01-01T00:00:00Z"
 
 // TestProcessFeed_InvalidFilterRegex asserts a feed with an unparsable
 // filter regex records the compile error on the feed's status and sends
@@ -43,7 +51,7 @@ func TestProcessFeed_InvalidFilterRegex(t *testing.T) {
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, rateLimitRetryAfter := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, oneEntryFetch(), nil, client, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry for a deterministic regex compile error")
@@ -77,7 +85,7 @@ func TestProcessFeed_InvalidMessageTemplate(t *testing.T) {
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, oneEntryFetch(), nil, client, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry for a deterministic message template compile error")
@@ -108,7 +116,7 @@ func TestProcessFeed_InvalidForumThreadNameTemplate(t *testing.T) {
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, oneEntryFetch(), nil, client, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, oneEntryFetch(), nil, client, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry for a deterministic forum thread name template compile error")
@@ -133,7 +141,7 @@ func TestProcessFeed_NotModifiedPersistsLastModified(t *testing.T) {
 	fetchResult := rss.FetchResult{NotModified: true, LastModified: "Fri, 23 Oct 2015 07:28:00 GMT"}
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, fetchResult, nil, nil, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, fetchResult, nil, nil, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry on a 304 response")
@@ -155,14 +163,14 @@ func TestProcessFeed_LastCheckedTracksSuccessNotAttempts(t *testing.T) {
 	fg, feed := newMetricsFeedGroup(ns, name, "")
 
 	(&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, rss.FetchResult{}, errors.New("boom"), nil, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, rss.FetchResult{}, errors.New("boom"), nil, testReconcileTime)
 	if got := feedStatusFor(fg, feed.RSSUrl).LastChecked; got != "" {
 		t.Fatal("expected LastChecked not to be set after a fetch error")
 	}
 
 	(&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, "2026-01-01T00:00:00Z")
-	if got := feedStatusFor(fg, feed.RSSUrl).LastChecked; got != "2026-01-01T00:00:00Z" {
+		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, testReconcileTime)
+	if got := feedStatusFor(fg, feed.RSSUrl).LastChecked; got != testReconcileTime {
 		t.Fatalf("LastChecked after a 304 = %q, want it set to the check time", got)
 	}
 }
@@ -185,7 +193,7 @@ func TestProcessFeed_AlreadySentEntrySkipped(t *testing.T) {
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, fetchResult, nil, client, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, fetchResult, nil, client, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry for an already-sent entry")
@@ -222,7 +230,7 @@ func TestProcessFeed_RecoversFromStaleErrorWithNoNewEntries(t *testing.T) {
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
 	wantRetry, _ := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, fetchResult, nil, client, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, fetchResult, nil, client, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no retry once the feed recovers")
@@ -301,8 +309,7 @@ func TestFeedInBackoff(t *testing.T) {
 		{name: "malformed", backoffUntil: "not-a-timestamp", want: false},
 		{name: "future", backoffUntil: "2026-01-01T00:00:01Z", want: true},
 		{name: "past", backoffUntil: "2025-12-31T23:59:59Z", want: false},
-		{name: "equal to now", backoffUntil: "2026-01-01T00:00:00Z", want: false},
-		{name: "sentinel", backoffUntil: permanentBackoffSentinel, want: true},
+		{name: "equal to now", backoffUntil: testReconcileTime, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,7 +340,7 @@ func TestNextBackoffUntil(t *testing.T) {
 // TestProcessFeed_PermanentFetchFailureSetsBackoff asserts a permanent fetch
 // error (HTTP 404) sets BackoffUntil to an exponential offset, returns no
 // wantRetry (the group's normal interval is unaffected), and does not set a
-// sentinel on the first few retries.
+// capped backoff on the first few retries.
 func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
 	ctx := t.Context()
 	ns, name := "processfeed-perm-backoff", "fg-perm-backoff"
@@ -345,7 +352,7 @@ func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
 
 	before := time.Now().UTC()
 	wantRetry, rateLimitRetryAfter := (&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, testReconcileTime)
 	after := time.Now().UTC()
 
 	if wantRetry {
@@ -358,9 +365,6 @@ func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
 	fs := feedStatusFor(fg, feed.RSSUrl)
 	if fs.BackoffUntil == "" {
 		t.Fatal("expected BackoffUntil to be set after a permanent failure")
-	}
-	if fs.BackoffUntil == permanentBackoffSentinel {
-		t.Fatal("expected a concrete timestamp, not sentinel, on first failure")
 	}
 	until, err := time.Parse(time.RFC3339, fs.BackoffUntil)
 	if err != nil {
@@ -377,37 +381,81 @@ func TestProcessFeed_PermanentFetchFailureSetsBackoff(t *testing.T) {
 	}
 }
 
-// TestProcessFeed_PermanentFetchFailureCapSetsSentinel asserts that once the
-// exponential backoff exceeds 6h, BackoffUntil is set to the sentinel and the
-// Warning Event fires.
-func TestProcessFeed_PermanentFetchFailureCapSetsSentinel(t *testing.T) {
+// TestProcessFeed_PermanentFetchFailureCapKeepsRetrying asserts that once the
+// exponential backoff exceeds 6h it is capped at maxPermanentBackoff (the feed
+// stays retryable rather than being disabled), the Warning Event fires the
+// first time the cap is hit, and does not fire again on later capped retries.
+func TestProcessFeed_PermanentFetchFailureCapKeepsRetrying(t *testing.T) {
 	ctx := t.Context()
-	ns, name := "processfeed-perm-sentinel", "fg-perm-sentinel"
+	ns, name := "processfeed-perm-cap", "fg-perm-cap"
 	defer deleteFeedGroupMetrics(ns, name)
 
 	fg, feed := newMetricsFeedGroup(ns, name, "")
 	fg.Spec.RetryInterval = "5m"
 	// RetryCount=6 means after the increment it becomes 7, and
-	// 5m * 2^7 = 640m > 6h, which should trigger the sentinel.
+	// 5m * 2^7 = 640m > 6h, which is the first capped retry.
 	feedStatusFor(fg, feed.RSSUrl).RetryCount = 6
 	notFoundErr := &rss.HTTPStatusError{StatusCode: 404, Status: http404Status}
 
 	recorder := events.NewFakeRecorder(10)
-	wantRetry, _ := (&FeedGroupReconciler{Recorder: recorder}).processFeed(
-		ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, "2026-01-01T00:00:00Z")
+	r := &FeedGroupReconciler{Recorder: recorder}
+	before := time.Now().UTC()
+	wantRetry, _ := r.processFeed(ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, testReconcileTime)
 
 	if wantRetry {
 		t.Fatal("expected no group-level retry for a capped permanent failure")
 	}
 	fs := feedStatusFor(fg, feed.RSSUrl)
-	if fs.BackoffUntil != permanentBackoffSentinel {
-		t.Errorf("BackoffUntil = %q, want sentinel %q", fs.BackoffUntil, permanentBackoffSentinel)
+	until, err := time.Parse(time.RFC3339, fs.BackoffUntil)
+	if err != nil {
+		t.Fatalf("BackoffUntil %q is not RFC3339: %v", fs.BackoffUntil, err)
+	}
+	if got := until.Sub(before); got < maxPermanentBackoff-time.Second || got > maxPermanentBackoff+time.Minute {
+		t.Errorf("BackoffUntil is %v out, want ~%v", got, maxPermanentBackoff)
 	}
 	select {
 	case <-recorder.Events:
-		// good: Warning Event fired
 	default:
-		t.Fatal("expected Warning Event when sentinel is set")
+		t.Fatal("expected Warning Event the first time the cap is reached")
+	}
+
+	// A further capped retry keeps the cap but does not re-fire the Event.
+	r.processFeed(ctx, fg, feed, rss.FetchResult{}, notFoundErr, nil, testReconcileTime)
+	select {
+	case ev := <-recorder.Events:
+		t.Fatalf("unexpected repeat Event: %s", ev)
+	default:
+	}
+	if feedInBackoff(feedStatusFor(fg, feed.RSSUrl).BackoffUntil, time.Now().UTC().Add(maxPermanentBackoff+time.Minute)) {
+		t.Error("feed should become retryable again once the capped backoff elapses")
+	}
+}
+
+// TestFeedDue covers the per-feed poll-interval gate.
+func TestFeedDue(t *testing.T) {
+	const recentCheck = "2026-01-01T11:59:00Z"
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	interval := 30 * time.Minute
+	cases := []struct {
+		name  string
+		fs    v1alpha1.FeedStatus
+		force bool
+		want  bool
+	}{
+		{name: "never checked", want: true},
+		{name: "checked recently", fs: v1alpha1.FeedStatus{LastChecked: "2026-01-01T11:45:00Z"}, want: false},
+		{name: "interval elapsed", fs: v1alpha1.FeedStatus{LastChecked: "2026-01-01T11:30:00Z"}, want: true},
+		{name: "malformed LastChecked", fs: v1alpha1.FeedStatus{LastChecked: "garbage"}, want: true},
+		{name: "recent but failing", fs: v1alpha1.FeedStatus{LastChecked: recentCheck, LastError: "boom"}, want: true},
+		{name: "recent but retrying", fs: v1alpha1.FeedStatus{LastChecked: recentCheck, RetryCount: 1}, want: true},
+		{name: "recent but spec changed", fs: v1alpha1.FeedStatus{LastChecked: recentCheck}, force: true, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := feedDue(&tc.fs, interval, now, tc.force); got != tc.want {
+				t.Errorf("feedDue() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -425,7 +473,7 @@ func TestProcessFeed_PermanentFailureClearedOnSuccess(t *testing.T) {
 	feedStatusFor(fg, feed.RSSUrl).RetryCount = 3
 
 	(&FeedGroupReconciler{}).processFeed(
-		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, "2026-01-01T00:00:00Z")
+		ctx, fg, feed, rss.FetchResult{NotModified: true}, nil, nil, testReconcileTime)
 
 	fs := feedStatusFor(fg, feed.RSSUrl)
 	if fs.BackoffUntil != "" {
@@ -444,7 +492,7 @@ func TestClearPermanentBackoffs(t *testing.T) {
 	fg.Spec.Feeds = append(fg.Spec.Feeds, v1alpha1.FeedSpec{RSSUrl: "https://other.example.com/feed.xml"})
 	ensureFeedStatuses(fg)
 
-	feedStatusFor(fg, exampleFeedURL).BackoffUntil = permanentBackoffSentinel
+	feedStatusFor(fg, exampleFeedURL).BackoffUntil = "2030-01-01T00:00:00Z"
 	feedStatusFor(fg, exampleFeedURL).RetryCount = 7
 	feedStatusFor(fg, "https://other.example.com/feed.xml").RetryCount = 2
 
@@ -458,4 +506,173 @@ func TestClearPermanentBackoffs(t *testing.T) {
 			t.Errorf("feed %s: RetryCount = %d, want 0", fs.RSSUrl, fs.RetryCount)
 		}
 	}
+}
+
+// failingTemplateFeed returns a feed whose message template parses but fails
+// at execution time ({{.Title.Nope}} indexes into a string), i.e. a
+// deterministic per-entry render error.
+func failingTemplateFeed(ns, name string) (*v1alpha1.FeedGroup, v1alpha1.FeedSpec) {
+	return newMetricsFeedGroup(ns, name, "{{.Title.Nope}}")
+}
+
+// TestProcessFeed_RenderErrorSkipsEntryAfterRetriesExhausted asserts that an
+// entry that deterministically fails to render blocks its feed only while
+// retries last: once RetryCount has passed the limit it is skipped (recorded
+// as handled, with an Event and the skipped outcome) and a later entry in the
+// same feed is still delivered.
+func TestProcessFeed_RenderErrorSkipsEntryAfterRetriesExhausted(t *testing.T) {
+	ctx := t.Context()
+	ns, name := "processfeed-skip-render", "fg-skip-render"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	fg, feed := failingTemplateFeed(ns, name)
+	// Only the first entry uses the broken template path; a per-feed format
+	// applies to all entries, so make the second one render by guarding on
+	// Title: {{if eq .Title "bad"}}{{.Title.Nope}}{{else}}ok{{end}}.
+	feed.Format = `{{if eq .Title "bad"}}{{.Title.Nope}}{{else}}ok {{.Title}}{{end}}`
+	fg.Spec.Feeds[0] = feed
+	fg.Spec.Retries = 2
+	fetch := rss.FetchResult{Entries: []rss.Entry{
+		{ID: "https://example.com/bad", Title: "bad", Seq: 1},
+		{ID: "https://example.com/good", Title: "good", Seq: 0},
+	}}
+	recorder := events.NewFakeRecorder(10)
+	r := &FeedGroupReconciler{Recorder: recorder}
+
+	// Attempts 1 and 2 exhaust the retries and hold the feed on the bad entry.
+	for range 2 {
+		r.processFeed(ctx, fg, feed, fetch, nil, client, testReconcileTime)
+	}
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	if fs.LastSeenEntry != "" || discordServer.MessageCount() != 0 {
+		t.Fatalf("entries must stay held while retries remain: seen=%q sent=%d", fs.LastSeenEntry, discordServer.MessageCount())
+	}
+	for len(recorder.Events) > 0 {
+		<-recorder.Events
+	}
+
+	// The next reconcile gives up on the bad entry and sends the good one.
+	r.processFeed(ctx, fg, feed, fetch, nil, client, testReconcileTime)
+
+	if got := discordServer.MessageCount(); got != 1 {
+		t.Fatalf("expected the entry behind the poison one to be sent, got %d messages", got)
+	}
+	fs = feedStatusFor(fg, feed.RSSUrl)
+	if _, ok := fs.LastSent[computeEntryKey(fetch.Entries[0])]; !ok {
+		t.Error("skipped entry should be recorded in LastSent so it isn't retried")
+	}
+	if fs.LastSeenEntry != "https://example.com/good" || fs.RetryCount != 0 || fs.LastError != "" {
+		t.Errorf("unexpected status after skip+send: %+v", fs)
+	}
+	select {
+	case ev := <-recorder.Events:
+		if !strings.Contains(ev, reasonEntrySkipped) {
+			t.Errorf("event %q should name %s", ev, reasonEntrySkipped)
+		}
+	default:
+		t.Error("expected a SkippedEntry Event")
+	}
+}
+
+// TestProcessFeed_BrokenTemplateNeverSkipsEntries asserts that when the
+// template fails for every entry (a typo'd field, not bad content), retries
+// being exhausted does not drain the feed into LastSent: the entries stay
+// pending so fixing the template still delivers them.
+func TestProcessFeed_BrokenTemplateNeverSkipsEntries(t *testing.T) {
+	ctx := t.Context()
+	ns, name := "processfeed-broken-template", "fg-broken-template"
+	defer deleteFeedGroupMetrics(ns, name)
+
+	discordServer := NewMockDiscordServer()
+	defer discordServer.Close()
+	client := discordServer.DiscordClientBuilder()(discordServer.URL())
+
+	fg, feed := failingTemplateFeed(ns, name)
+	fg.Spec.Retries = 1
+	fetch := rss.FetchResult{Entries: []rss.Entry{
+		{ID: "https://example.com/entry-a", Title: "a", Seq: 1},
+		{ID: "https://example.com/entry-b", Title: "b", Seq: 0},
+	}}
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	fs.RetryCount = 5 // far past the retry limit
+
+	recorder := events.NewFakeRecorder(10)
+	(&FeedGroupReconciler{Recorder: recorder}).processFeed(ctx, fg, feed, fetch, nil, client, testReconcileTime)
+
+	if len(fs.LastSent) != 0 || fs.LastSeenEntry != "" {
+		t.Errorf("no entry may be marked handled when the template is broken for all: LastSent=%v seen=%q", fs.LastSent, fs.LastSeenEntry)
+	}
+	for len(recorder.Events) > 0 {
+		if ev := <-recorder.Events; strings.Contains(ev, reasonEntrySkipped) {
+			t.Errorf("unexpected skip event: %s", ev)
+		}
+	}
+}
+
+func TestClampText(t *testing.T) {
+	if got := clampText(shortContent, 10); got != shortContent {
+		t.Errorf("clampText(short) = %q", got)
+	}
+	long := strings.Repeat("é", 100) // 2 bytes per rune
+	got := clampText(long, 51)
+	if len(got) > 51 || !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
+		t.Errorf("clampText split a rune or overshot: len=%d valid=%v %q", len(got), utf8.ValidString(got), got)
+	}
+}
+
+// TestLongIdentityWatermarkMatchesAcrossReconciles asserts an entry identity
+// too long for LastSeenEntry is stored as a digest that still matches the same
+// entry next reconcile (so it neither blocks the schema nor re-sends).
+func TestLongIdentityWatermarkMatchesAcrossReconciles(t *testing.T) {
+	longID := "https://example.com/" + strings.Repeat("a", 3000)
+	stored := clampWatermark(entryIdentity(rss.Entry{ID: longID}))
+	if len(stored) > maxStatusTextBytes {
+		t.Fatalf("stored watermark is %d bytes, over the limit", len(stored))
+	}
+	if !entriesContainID([]rss.Entry{{ID: longID}}, stored) {
+		t.Error("long identity should still be found by its stored watermark")
+	}
+	// A value stored raw by an older version normalizes to the same digest.
+	if got := clampWatermark(longID); got != stored {
+		t.Error("legacy raw watermark should normalize to the same digest")
+	}
+}
+
+// TestFeedGroupStatusWorstCaseStaysUnderBudget fills every bounded status
+// field to its cap for a maximal (50-feed) group and checks the serialized
+// status leaves room in etcd's ~1.5MB object limit for the spec.
+func TestFeedGroupStatusWorstCaseStaysUnderBudget(t *testing.T) {
+	var status v1alpha1.FeedGroupStatus
+	for i := range 50 {
+		fs := v1alpha1.FeedStatus{
+			RSSUrl:        "https://example.com/" + strings.Repeat("u", 2048-21) + strconv.Itoa(i%10),
+			LastChecked:   strings.Repeat("t", 64),
+			LastSeenEntry: clampWatermark(strings.Repeat("s", 5000)),
+			LastError:     clampText(strings.Repeat("e", 40000), maxStatusTextBytes),
+			ETag:          strings.Repeat("g", 256),
+			LastModified:  strings.Repeat("m", 64),
+			BackoffUntil:  strings.Repeat("b", 64),
+			LastSent:      map[string]string{},
+		}
+		for j := range maxLastSentPerFeed {
+			fs.LastSent[hashIdentity(strconv.Itoa(j))] = testReconcileTime
+		}
+		for _, typ := range []string{v1alpha1.FeedConditionTypeReachable, v1alpha1.FeedConditionTypeDelivered} {
+			setFeedCondition(&fs, typ, metav1.ConditionFalse, strings.Repeat("R", 64), strings.Repeat("m", 40000), 1)
+		}
+		status.Feeds = append(status.Feeds, fs)
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const budget = 800 * 1024
+	if len(raw) > budget {
+		t.Fatalf("worst-case status is %d bytes, over the %d budget", len(raw), budget)
+	}
+	t.Logf("worst-case status: %d bytes", len(raw))
 }
