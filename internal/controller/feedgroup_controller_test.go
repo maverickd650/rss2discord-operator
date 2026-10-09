@@ -304,6 +304,12 @@ func withRetries(retryInterval string, retries int32) feedGroupOption {
 // webhook URL from secretName and watches a single feed at feedURL, with
 // defaultInterval. Opts adjust the result.
 func newTestFeedGroup(name, secretName, feedURL string, opts ...feedGroupOption) *rss2discordv1alpha1.FeedGroup {
+	return newTestFeedGroupFeeds(name, secretName, []rss2discordv1alpha1.FeedSpec{{RSSUrl: feedURL}}, opts...)
+}
+
+// newTestFeedGroupFeeds is newTestFeedGroup for a FeedGroup that watches the
+// given feeds.
+func newTestFeedGroupFeeds(name, secretName string, feeds []rss2discordv1alpha1.FeedSpec, opts ...feedGroupOption) *rss2discordv1alpha1.FeedGroup {
 	fg := &rss2discordv1alpha1.FeedGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
 		Spec: rss2discordv1alpha1.FeedGroupSpec{
@@ -312,7 +318,7 @@ func newTestFeedGroup(name, secretName, feedURL string, opts ...feedGroupOption)
 				Key:                  secretURLKey,
 			},
 			Interval: defaultInterval,
-			Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: feedURL}},
+			Feeds:    feeds,
 		},
 	}
 	for _, opt := range opts {
@@ -779,28 +785,14 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-embed", discordServer.URL())
 
 			By("Creating FeedGroup resource with embed and forum thread config")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-embed"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Embed: &rss2discordv1alpha1.EmbedSpec{
-						Enabled: true,
-						Color:   "#00FF00",
-					},
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL(), ForumThreadName: "{{.Title}}"},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroupFeeds(feedGroupName, "discord-webhook-embed", []rss2discordv1alpha1.FeedSpec{
+				{RSSUrl: rssServer.URL(), ForumThreadName: "{{.Title}}"},
+			}, withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Embed = &rss2discordv1alpha1.EmbedSpec{
+					Enabled: true,
+					Color:   "#00FF00",
+				}
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1369,27 +1361,14 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-3", discordServer.URL())
 
 			By("Creating FeedGroup with regex filter")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameFilter,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-3"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-							Filter: &rss2discordv1alpha1.Filter{
-								Regex: "Kubernetes|K8s",
-							},
-						},
+			feedGroup := newTestFeedGroupFeeds(feedGroupNameFilter, "discord-webhook-3", []rss2discordv1alpha1.FeedSpec{
+				{
+					RSSUrl: rssServer.URL(),
+					Filter: &rss2discordv1alpha1.Filter{
+						Regex: "Kubernetes|K8s",
 					},
 				},
-			}
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1432,27 +1411,14 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-4", discordServer.URL())
 
 			By("Creating FeedGroup with keyword filter")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameKeywords,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-4"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-							Filter: &rss2discordv1alpha1.Filter{
-								Keywords: []string{"Python", "Django"},
-							},
-						},
+			feedGroup := newTestFeedGroupFeeds(feedGroupNameKeywords, "discord-webhook-4", []rss2discordv1alpha1.FeedSpec{
+				{
+					RSSUrl: rssServer.URL(),
+					Filter: &rss2discordv1alpha1.Filter{
+						Keywords: []string{"Python", "Django"},
 					},
 				},
-			}
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1486,25 +1452,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-5", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup with paused feed")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNamePaused,
-					Namespace: namespace,
+			feedGroup := newTestFeedGroupFeeds(feedGroupNamePaused, "discord-webhook-5", []rss2discordv1alpha1.FeedSpec{
+				{
+					RSSUrl: rssServer.URL(),
+					Paused: true,
 				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-5"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-							Paused: true,
-						},
-					},
-				},
-			}
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1636,25 +1589,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			const keptFeedURL = "https://example.com/kept-feed.xml"
 
 			By("Creating FeedGroup resource with two feeds")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-removed"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-						{RSSUrl: keptFeedURL, Paused: true},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroupFeeds(feedGroupName, "discord-webhook-removed", []rss2discordv1alpha1.FeedSpec{
+				{RSSUrl: rssServer.URL()},
+				{RSSUrl: keptFeedURL, Paused: true},
+			}, withRetries("5m", 3))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := newTestReconciler(discordServer)
@@ -1946,21 +1884,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-rl-multi-feed", discordServer.URL())
 
 			By("Creating a FeedGroup with both feeds, first feed listed first")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rl-multi-feed"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: firstFeed.URL()},
-						{RSSUrl: secondFeed.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroupFeeds(feedGroupName, "discord-webhook-rl-multi-feed", []rss2discordv1alpha1.FeedSpec{
+				{RSSUrl: firstFeed.URL()},
+				{RSSUrl: secondFeed.URL()},
+			}, func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.RetryInterval = "5m"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := newTestReconciler(discordServer)
@@ -2054,21 +1983,9 @@ var _ = Describe("FeedGroup Controller", func() {
 			createWebhookSecret(ctx, "discord-webhook-concurrent", discordServer.URL())
 
 			By("Creating a FeedGroup with more feeds than the concurrent-fetch limit")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-concurrent"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Feeds:         feeds,
-				},
-			}
+			feedGroup := newTestFeedGroupFeeds(feedGroupName, "discord-webhook-concurrent", feeds, func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.RetryInterval = "5m"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := newTestReconciler(discordServer)
