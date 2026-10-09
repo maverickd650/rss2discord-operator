@@ -67,6 +67,16 @@ func (s redactedSpan) Attributes() []attribute.KeyValue {
 // (.../api/webhooks/<id>/<token>[/...]) with a fixed placeholder. Returns
 // the input unchanged (changed=false) if it doesn't look like a Discord
 // webhook URL.
+//
+// A string url.Parse rejects is also returned unchanged. That is safe today
+// because no such string can reach a span: the only spans come from otelhttp
+// wrapping the RSS and Discord transports, and both clients reject
+// unparsable URLs (url.ParseRequestURI) before building a request, so
+// otelhttp only ever records url.full from an already-parsed *url.URL.
+// otelhttp's other free-text field, the span status description, is the
+// base transport's error string, which names host:port, never the path.
+// If a new span source starts recording raw, unvalidated URL strings, add a
+// regex fallback here rather than relying on this invariant.
 func redactWebhookURL(raw string) (redacted string, changed bool) {
 	u, err := url.Parse(raw)
 	if err != nil {
