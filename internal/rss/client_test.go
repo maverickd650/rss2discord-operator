@@ -239,7 +239,6 @@ func TestParseFeed_ExtractsImage(t *testing.T) {
 	cases := []struct {
 		name      string
 		data      string
-		wantLink  string
 		wantImage string
 	}{
 		{
@@ -249,7 +248,6 @@ func TestParseFeed_ExtractsImage(t *testing.T) {
 <item><title>Hello</title><link>http://example.com/1</link><description>World</description><guid>1</guid>
 <enclosure url="http://example.com/pic.jpg" type="image/jpeg" /></item>
 </channel></rss>`,
-			wantLink:  "http://example.com/1",
 			wantImage: "http://example.com/pic.jpg",
 		},
 		{
@@ -259,7 +257,6 @@ func TestParseFeed_ExtractsImage(t *testing.T) {
 <item><title>Hello</title><link>http://example.com/1</link><description>World</description><guid>1</guid>
 <media:thumbnail url="http://example.com/thumb.jpg" /></item>
 </channel></rss>`,
-			wantLink:  "http://example.com/1",
 			wantImage: "http://example.com/thumb.jpg",
 		},
 		{
@@ -274,7 +271,6 @@ func TestParseFeed_ExtractsImage(t *testing.T) {
 <summary>World</summary>
 </entry>
 </feed>`,
-			wantLink:  "http://example.com/1",
 			wantImage: "http://example.com/pic.jpg",
 		},
 	}
@@ -287,7 +283,7 @@ func TestParseFeed_ExtractsImage(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("unexpected entries: %+v", entries)
 			}
-			if entries[0].Link != tc.wantLink {
+			if entries[0].Link != "http://example.com/1" {
 				t.Fatalf("unexpected link: %q", entries[0].Link)
 			}
 			if entries[0].Image != tc.wantImage {
