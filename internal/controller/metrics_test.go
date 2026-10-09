@@ -302,6 +302,21 @@ func assertNativeOnlyHistogram(t *testing.T, m *dto.Metric) {
 	}
 }
 
+// assertSeriesNativeOnly checks that the series of vec with the given label
+// values is exposed as a native-only histogram.
+func assertSeriesNativeOnly(t *testing.T, vec *prometheus.HistogramVec, labelValues ...string) {
+	t.Helper()
+	obs, err := vec.GetMetricWithLabelValues(labelValues...)
+	if err != nil {
+		t.Fatalf("get histogram metric: %v", err)
+	}
+	var m dto.Metric
+	if err := obs.(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("write histogram metric: %v", err)
+	}
+	assertNativeOnlyHistogram(t, &m)
+}
+
 // TestFeedRequestDuration_NativeOnlyHistogram guards the native-only
 // exposition config on feedRequestDuration: no classic buckets (so it isn't
 // duplicated as a classic + native pair of dashboard panels) while the
@@ -312,15 +327,7 @@ func TestFeedRequestDuration_NativeOnlyHistogram(t *testing.T) {
 
 	feedRequestDuration.WithLabelValues(ns, name, operationFetch).Observe(0.2)
 
-	obs, err := feedRequestDuration.GetMetricWithLabelValues(ns, name, operationFetch)
-	if err != nil {
-		t.Fatalf("get histogram metric: %v", err)
-	}
-	var m dto.Metric
-	if err := obs.(prometheus.Metric).Write(&m); err != nil {
-		t.Fatalf("write histogram metric: %v", err)
-	}
-	assertNativeOnlyHistogram(t, &m)
+	assertSeriesNativeOnly(t, feedRequestDuration, ns, name, operationFetch)
 }
 
 // TestFeedGroupReconcileDuration_NativeOnlyHistogram mirrors
@@ -331,15 +338,7 @@ func TestFeedGroupReconcileDuration_NativeOnlyHistogram(t *testing.T) {
 
 	feedGroupReconcileDuration.WithLabelValues(ns, name).Observe(0.2)
 
-	obs, err := feedGroupReconcileDuration.GetMetricWithLabelValues(ns, name)
-	if err != nil {
-		t.Fatalf("get histogram metric: %v", err)
-	}
-	var m dto.Metric
-	if err := obs.(prometheus.Metric).Write(&m); err != nil {
-		t.Fatalf("write histogram metric: %v", err)
-	}
-	assertNativeOnlyHistogram(t, &m)
+	assertSeriesNativeOnly(t, feedGroupReconcileDuration, ns, name)
 }
 
 // TestMessageOverflowChars_NativeOnlyHistogram mirrors
@@ -350,15 +349,7 @@ func TestMessageOverflowChars_NativeOnlyHistogram(t *testing.T) {
 
 	messageOverflowChars.WithLabelValues(ns, name).Observe(42)
 
-	obs, err := messageOverflowChars.GetMetricWithLabelValues(ns, name)
-	if err != nil {
-		t.Fatalf("get histogram metric: %v", err)
-	}
-	var m dto.Metric
-	if err := obs.(prometheus.Metric).Write(&m); err != nil {
-		t.Fatalf("write histogram metric: %v", err)
-	}
-	assertNativeOnlyHistogram(t, &m)
+	assertSeriesNativeOnly(t, messageOverflowChars, ns, name)
 }
 
 // TestDeleteFeedGroupMetrics confirms a deleted FeedGroup's series are

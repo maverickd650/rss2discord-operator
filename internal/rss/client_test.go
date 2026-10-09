@@ -19,36 +19,27 @@ const testETag = `"abc123"`
 
 const testLastModified = "Wed, 21 Oct 2015 07:28:00 GMT"
 
-func TestFetchEntries_RejectsNonHTTPScheme(t *testing.T) {
-	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(t.Context(), "ftp://example.com/feed.xml", CacheValidators{})
-	if err == nil {
-		t.Fatal("expected error for non-http(s) scheme, got nil")
+func TestFetchEntries_RejectsInvalidURLs(t *testing.T) {
+	cases := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{"non-http scheme", "ftp://example.com/feed.xml", "unsupported feed URL scheme"},
+		{"blank URL", " \t ", "feed URL is empty"},
+		{"unparsable URL", "://bad-url", "invalid feed URL"},
 	}
-	if !strings.Contains(err.Error(), "unsupported feed URL scheme") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestFetchEntries_RejectsEmptyURL(t *testing.T) {
-	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(t.Context(), "   ", CacheValidators{})
-	if err == nil {
-		t.Fatal("expected error for an empty/blank feed URL, got nil")
-	}
-	if !strings.Contains(err.Error(), "feed URL is empty") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestFetchEntries_RejectsUnparsableURL(t *testing.T) {
-	c := NewClient(&http.Client{})
-	_, err := c.FetchEntries(t.Context(), "://bad-url", CacheValidators{})
-	if err == nil {
-		t.Fatal("expected error for an unparsable feed URL, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid feed URL") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewClient(&http.Client{})
+			_, err := c.FetchEntries(t.Context(), tc.url, CacheValidators{})
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

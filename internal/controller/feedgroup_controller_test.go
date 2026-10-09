@@ -268,14 +268,61 @@ func (d *MockDiscordServer) DiscordClientBuilder() func(webhookURL string) *disc
 	}
 }
 
-// Helper function to create an RSS feed XML
-func createRSSFeed(entries ...struct {
+const testNamespace = "default"
+
+// testEntry describes one <item> in a feed built by createRSSFeed.
+type testEntry struct {
 	title       string
 	description string
 	link        string
 	pubDate     string
 	guid        string
-}) string {
+}
+
+// createWebhookSecret creates a Secret in the test namespace whose secretURLKey
+// holds webhookURL.
+func createWebhookSecret(ctx context.Context, name, webhookURL string) {
+	GinkgoHelper()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+		Data:       map[string][]byte{secretURLKey: []byte(webhookURL)},
+	}
+	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+}
+
+type feedGroupOption func(*rss2discordv1alpha1.FeedGroup)
+
+// withRetries sets the retry interval and retry count.
+func withRetries(retryInterval string, retries int32) feedGroupOption {
+	return func(fg *rss2discordv1alpha1.FeedGroup) {
+		fg.Spec.RetryInterval = retryInterval
+		fg.Spec.Retries = retries
+	}
+}
+
+// newTestFeedGroup builds a FeedGroup in the test namespace that reads its
+// webhook URL from secretName and watches a single feed at feedURL, with
+// defaultInterval. Opts adjust the result.
+func newTestFeedGroup(name, secretName, feedURL string, opts ...feedGroupOption) *rss2discordv1alpha1.FeedGroup {
+	fg := &rss2discordv1alpha1.FeedGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+		Spec: rss2discordv1alpha1.FeedGroupSpec{
+			DiscordWebhookSecretRef: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  secretURLKey,
+			},
+			Interval: defaultInterval,
+			Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: feedURL}},
+		},
+	}
+	for _, opt := range opts {
+		opt(fg)
+	}
+	return fg
+}
+
+// Helper function to create an RSS feed XML
+func createRSSFeed(entries ...testEntry) string {
 	var feed strings.Builder
 	feed.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -331,26 +378,14 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Test Article 1",
 					description: "This is a test article",
 					link:        "https://example.com/article1",
 					pubDate:     time.Now().Add(-1 * time.Hour).Format(time.RFC1123Z),
 					guid:        "article-1",
 				},
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Test Article 2",
 					description: "This is another test article",
 					link:        "https://example.com/article2",
@@ -361,39 +396,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      discordWebhookSecretName,
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, discordWebhookSecretName, discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameBasic,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: discordWebhookSecretName},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Format:        "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-						},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupNameBasic, discordWebhookSecretName, rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Format = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -438,13 +446,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Conditional Article",
 					description: "First fetch",
 					link:        "https://example.com/conditional-article",
@@ -456,36 +458,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-conditional",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-conditional", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-conditional"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-conditional", rssServer.URL(), withRetries("5m", 3))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -545,13 +521,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Retry Article",
 					description: "Should survive a failed send",
 					link:        "https://example.com/retry-article",
@@ -563,36 +533,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-conditional-retry",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-conditional-retry", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-conditional-retry"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-conditional-retry", rssServer.URL(), withRetries("5m", 3))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -638,13 +582,7 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should fall back to catch-up instead of silently skipping every entry forever", func() {
 			const feedGroupName = "test-feedgroup-stale-lastseen"
 
-			type item = struct {
-				title       string
-				description string
-				link        string
-				pubDate     string
-				guid        string
-			}
+			type item = testEntry
 
 			By("Creating mock Discord webhook server")
 			discordServer := NewMockDiscordServer()
@@ -661,37 +599,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-stale-lastseen",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-stale-lastseen", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-stale-lastseen"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					CatchUpLimit:  5,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-stale-lastseen", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.CatchUpLimit = 5
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -792,13 +705,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer discordServer.Close()
 
 			By("Creating a mock RSS feed server with a long backlog")
-			type item = struct {
-				title       string
-				description string
-				link        string
-				pubDate     string
-				guid        string
-			}
+			type item = testEntry
 			entries := make([]item, 0, 10)
 			for i := range 10 {
 				entries = append(entries, item{
@@ -813,37 +720,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-catchup",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-catchup", discordServer.URL())
 
 			By("Creating FeedGroup resource with a catch-up limit of 3")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-catchup"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					CatchUpLimit:  3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-catchup", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.CatchUpLimit = 3
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -870,13 +752,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			discordServer := NewMockDiscordServer()
 			defer discordServer.Close()
 
-			type item = struct {
-				title       string
-				description string
-				link        string
-				pubDate     string
-				guid        string
-			}
+			type item = testEntry
 			noDate := func(title, guid string) item {
 				// pubDate is left empty on purpose: this feed has no publish
 				// dates, which is exactly the case the ordering fallback covers.
@@ -892,30 +768,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-nodate",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{secretURLKey: []byte(discordServer.URL())},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-nodate", discordServer.URL())
 
 			By("Creating FeedGroup resource with a catch-up limit of 2")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-nodate"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					CatchUpLimit:  2,
-					Feeds:         []rss2discordv1alpha1.FeedSpec{{RSSUrl: rssServer.URL()}},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-nodate", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.CatchUpLimit = 2
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -968,13 +826,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server with an HTML description")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "HTML Article",
 					description: "&lt;p&gt;First paragraph.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;One&lt;/li&gt;&lt;/ul&gt;",
 					link:        "https://example.com/html-article",
@@ -985,37 +837,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-html",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-html", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-html"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Format:        "{{.Description}}",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-html", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Format = "{{.Description}}"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1065,16 +892,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-embed",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-embed", discordServer.URL())
 
 			By("Creating FeedGroup resource with embed and forum thread config")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -1149,39 +967,14 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-embed-unsafe-url",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-embed-unsafe-url", discordServer.URL())
 
 			By("Creating FeedGroup resource with embed enabled")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-embed-unsafe-url"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Embed: &rss2discordv1alpha1.EmbedSpec{
-						Enabled: true,
-					},
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-embed-unsafe-url", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Embed = &rss2discordv1alpha1.EmbedSpec{
+					Enabled: true,
+				}
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1209,24 +1002,7 @@ var _ = Describe("FeedGroup Controller", func() {
 	Describe("Error handling", func() {
 		It("should handle missing Discord webhook secret", func() {
 			By("Creating FeedGroup without secret")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameNoSecret,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "nonexistent-secret"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: "https://example.com/feed",
-						},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupNameNoSecret, "nonexistent-secret", "https://example.com/feed")
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1252,26 +1028,9 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-blank-secret-value"
 
 			By("Creating a secret whose key holds only whitespace")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-blank-value",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{secretURLKey: []byte("   ")},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-blank-value", "   ")
 
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-blank-value"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: exampleFeedURL}},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-blank-value", exampleFeedURL)
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1310,17 +1069,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-missing-key"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds:    []rss2discordv1alpha1.FeedSpec{{RSSUrl: exampleFeedURL}},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-missing-key", exampleFeedURL)
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1356,38 +1105,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-2",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-2", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameRetry,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-2"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "1m",
-					Retries:       2,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL,
-						},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupNameRetry, "discord-webhook-2", rssServer.URL, withRetries("1m", 2))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1459,13 +1180,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-default-rss-client"
 
 			By("Creating a mock RSS feed server bound to a loopback address")
-			rssServer := NewMockRSSServer(createRSSFeed(struct {
-				title       string
-				description string
-				link        string
-				pubDate     string
-				guid        string
-			}{
+			rssServer := NewMockRSSServer(createRSSFeed(testEntry{
 				title:       "Unreachable",
 				description: "Should never be fetched",
 				link:        "https://example.com/unreachable",
@@ -1475,36 +1190,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-default-rss-client",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-default-rss-client", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-default-rss-client"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-default-rss-client", rssServer.URL(), withRetries("5m", 3))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation without setting RSSClient")
@@ -1545,16 +1234,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-render-error",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-render-error", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup with a template field that fails at execution time, not parse time")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -1636,13 +1316,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server with one entry")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Send Error Article",
 					description: "Should never be delivered",
 					link:        "https://example.com/send-error-article",
@@ -1653,36 +1327,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-send-error",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-send-error", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-send-error"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "1m",
-					Retries:       2,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error", rssServer.URL(), withRetries("1m", 2))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -1741,26 +1389,14 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed with an older entry and a newer entry")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Older Article",
 					description: "Should not be skipped after failing to send",
 					link:        "https://example.com/older-article",
 					pubDate:     time.Now().Add(-1 * time.Hour).Format(time.RFC1123Z),
 					guid:        "older-article",
 				},
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Newer Article",
 					description: "Should not be sent before the older article",
 					link:        "https://example.com/newer-article",
@@ -1771,36 +1407,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-send-error-no-skip",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-send-error-no-skip", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-send-error-no-skip"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "1m",
-					Retries:       3,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error-no-skip", rssServer.URL(), withRetries("1m", 3))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -1846,13 +1456,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "ETag Article",
 					description: "Should not be stranded by a premature 304",
 					link:        "https://example.com/etag-article",
@@ -1864,36 +1468,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-send-error-etag",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-send-error-etag", discordServer.URL())
 
 			By("Creating FeedGroup resource with Retries=2, so the second failure exhausts retries")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-send-error-etag"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "1m",
-					Retries:       2,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error-etag", rssServer.URL(), withRetries("1m", 2))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -1945,13 +1523,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server with one entry")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Webhook Deleted Article",
 					description: "Should never be delivered",
 					link:        "https://example.com/webhook-deleted-article",
@@ -1962,36 +1534,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-send-error-permanent",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-send-error-permanent", discordServer.URL())
 
 			By("Creating FeedGroup resource with Retries=1, so the first failure exhausts retries")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-send-error-permanent"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Retries:       1,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error-permanent", rssServer.URL(), withRetries("5m", 1))
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			recorder := events.NewFakeRecorder(10)
@@ -2027,26 +1573,14 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server with multiple entries")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Kubernetes Release v1.30",
 					description: "New Kubernetes version released",
 					link:        "https://example.com/k8s",
 					pubDate:     time.Now().Add(-1 * time.Hour).Format(time.RFC1123Z),
 					guid:        "k8s-1",
 				},
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Python Conference Schedule",
 					description: "Python conference talks announced",
 					link:        "https://example.com/python",
@@ -2057,16 +1591,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-3",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-3", discordServer.URL())
 
 			By("Creating FeedGroup with regex filter")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -2118,26 +1643,14 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server with multiple entries")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Python Tutorial",
 					description: "Learn Python basics",
 					link:        "https://example.com/python",
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "python-1",
 				},
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "JavaScript Best Practices",
 					description: "Advanced JS patterns",
 					link:        "https://example.com/js",
@@ -2148,16 +1661,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-4",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-4", discordServer.URL())
 
 			By("Creating FeedGroup with keyword filter")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -2207,13 +1711,7 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should skip paused feeds", func() {
 			By("Creating a mock RSS feed server")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Test",
 					description: "Test",
 					link:        "https://example.com/test",
@@ -2224,16 +1722,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-5",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-5", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup with paused feed")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -2290,36 +1779,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-6",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-6", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupNameTimestamp,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-6"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-						},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupNameTimestamp, "discord-webhook-6", rssServer.URL())
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -2349,13 +1812,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Backoff Skip Article",
 					description: "Backoff Skip Article",
 					link:        "https://example.com/test",
@@ -2366,34 +1823,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-backoff-skip",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-backoff-skip", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-backoff-skip"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-backoff-skip", rssServer.URL())
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -2445,13 +1878,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Soon Removed",
 					description: "This feed will be removed from spec",
 					link:        "https://example.com/removed",
@@ -2463,16 +1890,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-removed",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-removed", discordServer.URL())
 
 			const keptFeedURL = "https://example.com/kept-feed.xml"
 
@@ -2546,22 +1964,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			// way Status().Update would.
 			const feedGroupName = "test-feedgroup-ssa-concurrent"
 
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-ssa-concurrent"},
-						Key:                  secretURLKey,
-					},
-					Interval: defaultInterval,
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: "https://example.com/ssa-concurrent.xml"},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-ssa-concurrent", "https://example.com/ssa-concurrent.xml")
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
@@ -2616,37 +2019,13 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-7",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-7", "https://discord.com/api/webhooks/12345/abcde")
 
 			By("Creating FeedGroup with custom interval")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-feedgroup-interval",
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-7"},
-						Key:                  secretURLKey,
-					},
-					Interval:      "1h",
-					RetryInterval: "5m",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{
-							RSSUrl: rssServer.URL(),
-						},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup("test-feedgroup-interval", "discord-webhook-7", rssServer.URL(), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Interval = "1h"
+				fg.Spec.RetryInterval = "5m"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
@@ -2671,47 +2050,16 @@ var _ = Describe("FeedGroup Controller", func() {
 
 	Describe("Spec validation", func() {
 		It("should reject an Interval that isn't a valid Go duration at apply time", func() {
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-bad-interval",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-bad-interval", "https://discord.com/api/webhooks/12345/abcde")
 
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-feedgroup-bad-interval",
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-bad-interval"},
-						Key:                  secretURLKey,
-					},
-					Interval: "30 minutes",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: exampleFeedURL},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup("test-feedgroup-bad-interval", "discord-webhook-bad-interval", exampleFeedURL, func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.Interval = "30 minutes"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(MatchError(ContainSubstring("spec.interval")))
 		})
 
 		It("should reject a RetryInterval that isn't a valid Go duration at apply time", func() {
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-bad-retry-interval",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-bad-retry-interval", "https://discord.com/api/webhooks/12345/abcde")
 
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
 				ObjectMeta: metav1.ObjectMeta{
@@ -2733,16 +2081,7 @@ var _ = Describe("FeedGroup Controller", func() {
 		})
 
 		It("should reject more than 50 Feeds at apply time", func() {
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-too-many-feeds",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte("https://discord.com/api/webhooks/12345/abcde"),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-too-many-feeds", "https://discord.com/api/webhooks/12345/abcde")
 
 			feeds := make([]rss2discordv1alpha1.FeedSpec, 51)
 			for i := range feeds {
@@ -2777,13 +2116,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Rate Limited Article",
 					description: "Should survive a 429",
 					link:        "https://example.com/rate-limited-article",
@@ -2795,35 +2128,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-rate-limited",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-rate-limited", discordServer.URL())
 
 			By("Creating FeedGroup resource")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      feedGroupName,
-					Namespace: namespace,
-				},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rate-limited"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					Feeds: []rss2discordv1alpha1.FeedSpec{
-						{RSSUrl: rssServer.URL()},
-					},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-rate-limited", rssServer.URL(), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.RetryInterval = "5m"
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -2874,13 +2184,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			discordServer.FailNextRequestsRateLimited(10, "2")
 
 			By("Creating a mock RSS feed with several catch-up entries")
-			type item = struct {
-				title       string
-				description string
-				link        string
-				pubDate     string
-				guid        string
-			}
+			type item = testEntry
 			entries := make([]item, 0, 5)
 			for i := range 5 {
 				entries = append(entries, item{
@@ -2895,26 +2199,13 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer rssServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "discord-webhook-rl-stop", Namespace: namespace},
-				Data:       map[string][]byte{secretURLKey: []byte(discordServer.URL())},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-rl-stop", discordServer.URL())
 
 			By("Creating FeedGroup with a catch-up limit of 5")
-			feedGroup := &rss2discordv1alpha1.FeedGroup{
-				ObjectMeta: metav1.ObjectMeta{Name: feedGroupName, Namespace: namespace},
-				Spec: rss2discordv1alpha1.FeedGroupSpec{
-					DiscordWebhookSecretRef: corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "discord-webhook-rl-stop"},
-						Key:                  secretURLKey,
-					},
-					Interval:      defaultInterval,
-					RetryInterval: "5m",
-					CatchUpLimit:  5,
-					Feeds:         []rss2discordv1alpha1.FeedSpec{{RSSUrl: rssServer.URL()}},
-				},
-			}
+			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-rl-stop", rssServer.URL(), func(fg *rss2discordv1alpha1.FeedGroup) {
+				fg.Spec.RetryInterval = "5m"
+				fg.Spec.CatchUpLimit = 5
+			})
 			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			reconciler := &FeedGroupReconciler{
@@ -2946,13 +2237,7 @@ var _ = Describe("FeedGroup Controller", func() {
 
 			By("Creating two mock RSS feed servers, each with one entry")
 			firstFeed := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "First Feed Article",
 					description: "Triggers the rate limit",
 					link:        "https://example.com/first-feed-article",
@@ -2962,13 +2247,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			))
 			defer firstFeed.Close()
 			secondFeed := NewMockRSSServer(createRSSFeed(
-				struct {
-					title       string
-					description string
-					link        string
-					pubDate     string
-					guid        string
-				}{
+				testEntry{
 					title:       "Second Feed Article",
 					description: "Should not be reached this reconcile",
 					link:        "https://example.com/second-feed-article",
@@ -2979,11 +2258,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer secondFeed.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "discord-webhook-rl-multi-feed", Namespace: namespace},
-				Data:       map[string][]byte{secretURLKey: []byte(discordServer.URL())},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-rl-multi-feed", discordServer.URL())
 
 			By("Creating a FeedGroup with both feeds, first feed listed first")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
@@ -3077,13 +2352,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			feeds := make([]rss2discordv1alpha1.FeedSpec, numFeeds)
 			for i := range rssServers {
 				rssServers[i] = NewMockRSSServer(createRSSFeed(
-					struct {
-						title       string
-						description string
-						link        string
-						pubDate     string
-						guid        string
-					}{
+					testEntry{
 						title:       fmt.Sprintf("Concurrent Article %d", i),
 						description: "fetched concurrently",
 						link:        fmt.Sprintf("https://example.com/concurrent-%d", i),
@@ -3104,16 +2373,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			defer discordServer.Close()
 
 			By("Creating a secret with Discord webhook URL")
-			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "discord-webhook-concurrent",
-					Namespace: namespace,
-				},
-				Data: map[string][]byte{
-					secretURLKey: []byte(discordServer.URL()),
-				},
-			}
-			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			createWebhookSecret(ctx, "discord-webhook-concurrent", discordServer.URL())
 
 			By("Creating a FeedGroup with more feeds than the concurrent-fetch limit")
 			feedGroup := &rss2discordv1alpha1.FeedGroup{
