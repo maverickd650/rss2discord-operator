@@ -13,7 +13,7 @@
       {
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "enable": true,
-        "expr": "ALERTS{alertname=~\"RSS2DiscordFeedFetchErrors|RSS2DiscordFeedSendErrors|RSS2DiscordFeedRateLimited\", alertstate=\"firing\", namespace=~\"$namespace\", name=~\"$feedgroup\"}",
+        "expr": "ALERTS{alertname=~\"RSS2DiscordFeedFetchErrors|RSS2DiscordFeedSendErrors|RSS2DiscordFeedRateLimited|RSS2DiscordFeedEntriesSkipped\", alertstate=\"firing\", namespace=~\"$namespace\", name=~\"$feedgroup\"}",
         "iconColor": "red",
         "name": "FeedGroup alerts firing",
         "step": "10s",
