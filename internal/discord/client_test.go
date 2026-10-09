@@ -84,17 +84,26 @@ func TestSendMessage_DoesNotFollowRedirect(t *testing.T) {
 	}
 }
 
-func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
-	requests := 0
+// newRateLimitedServer starts a TLS server that always answers 429 with
+// Retry-After: 60, allows its host for webhooks for the test's duration, and
+// returns a pointer to the count of requests it has served.
+func newRateLimitedServer(t *testing.T) (*httptest.Server, *int) {
+	t.Helper()
+	requests := new(int)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		*requests++
 		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	AllowedWebhookHosts["127.0.0.1"] = true
-	defer delete(AllowedWebhookHosts, "127.0.0.1")
+	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+	return srv, requests
+}
+
+func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
+	srv, requests := newRateLimitedServer(t)
 
 	limiter := NewRateLimiter()
 	// Two separate *Client instances for the same webhook, as
@@ -108,8 +117,8 @@ func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
 	if _, ok := errors.AsType[*RateLimitError](c1.SendMessageText(t.Context(), "first")); !ok {
 		t.Fatal("expected the first send to reach the server and return *RateLimitError")
 	}
-	if requests != 1 {
-		t.Fatalf("expected exactly 1 request so far, got %d", requests)
+	if *requests != 1 {
+		t.Fatalf("expected exactly 1 request so far, got %d", *requests)
 	}
 
 	// A second Client for the same webhook, sharing the limiter, must be
@@ -122,29 +131,20 @@ func TestSendMessage_SharedRateLimiterCooldownSkipsRequest(t *testing.T) {
 	if rle.RetryAfter <= 0 || rle.RetryAfter > 60*time.Second {
 		t.Fatalf("expected RetryAfter in (0, 60s], got %v", rle.RetryAfter)
 	}
-	if requests != 1 {
-		t.Fatalf("expected the second send to be short-circuited without a request, got %d requests", requests)
+	if *requests != 1 {
+		t.Fatalf("expected the second send to be short-circuited without a request, got %d requests", *requests)
 	}
 }
 
 func TestSendMessage_NilRateLimiterDoesNotCooldown(t *testing.T) {
-	requests := 0
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Retry-After", "60")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-
-	AllowedWebhookHosts["127.0.0.1"] = true
-	defer delete(AllowedWebhookHosts, "127.0.0.1")
+	srv, requests := newRateLimitedServer(t)
 
 	// NewClientWithHTTP (no limiter) must behave exactly as before this
 	// change: every send reaches the server, with no cross-Client cooldown.
 	c := NewClientWithHTTP(srv.URL, srv.Client())
 	_, _ = c.SendMessageText(t.Context(), "first"), c.SendMessageText(t.Context(), "second")
-	if requests != 2 {
-		t.Fatalf("expected both sends to reach the server without a shared limiter, got %d requests", requests)
+	if *requests != 2 {
+		t.Fatalf("expected both sends to reach the server without a shared limiter, got %d requests", *requests)
 	}
 }
 

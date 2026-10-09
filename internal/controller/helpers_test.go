@@ -137,61 +137,35 @@ func TestTruncateMessage(t *testing.T) {
 func TestParseDurationWithDefault(t *testing.T) {
 	fallback := 5 * time.Minute
 
-	t.Run("blank uses fallback", func(t *testing.T) {
-		got, err := parseDurationWithDefault("  ", fallback)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != fallback {
-			t.Fatalf("got %v, want fallback %v", got, fallback)
-		}
-	})
-
-	t.Run("valid duration parsed", func(t *testing.T) {
-		got, err := parseDurationWithDefault("90s", fallback)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != 90*time.Second {
-			t.Fatalf("got %v, want 90s", got)
-		}
-	})
-
-	t.Run("invalid duration returns fallback and error", func(t *testing.T) {
-		got, err := parseDurationWithDefault("nope", fallback)
-		if err == nil {
-			t.Fatal("expected error for invalid duration, got nil")
-		}
-		if got != fallback {
-			t.Fatalf("expected fallback on error, got %v", got)
-		}
-	})
-
-	t.Run("overflowing duration returns fallback and error", func(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "blank uses fallback", in: "  ", want: fallback},
+		{name: "valid duration parsed", in: "90s", want: 90 * time.Second},
+		{name: "invalid duration returns fallback and error", in: "nope", want: fallback, wantErr: true},
 		// The CRD's Pattern validation on Interval/RetryInterval
 		// (feedgroup_types.go) accepts unbounded digit runs, so a value like
 		// this passes admission but still overflows time.ParseDuration.
-		got, err := parseDurationWithDefault("99999999999999999999h", fallback)
-		if err == nil {
-			t.Fatal("expected error for an overflowing duration, got nil")
-		}
-		if got != fallback {
-			t.Fatalf("expected fallback on error, got %v", got)
-		}
-	})
-
-	t.Run("tiny duration is floored", func(t *testing.T) {
+		{name: "overflowing duration returns fallback and error", in: "99999999999999999999h", want: fallback, wantErr: true},
 		// "1ns" (or "0s") passes the CRD's Pattern validation, but fed
 		// straight into ctrl.Result{RequeueAfter: ...} would requeue in a
 		// tight loop; parseDurationWithDefault floors it instead.
-		got, err := parseDurationWithDefault("1ns", fallback)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != minParsedInterval {
-			t.Fatalf("got %v, want floor %v", got, minParsedInterval)
-		}
-	})
+		{name: "tiny duration is floored", in: "1ns", want: minParsedInterval},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseDurationWithDefault(tc.in, fallback)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestRequeueWithStatus_InvalidIntervalReturnsError asserts requeueWithStatus
@@ -435,33 +409,25 @@ func TestEnsureFeedStatuses(t *testing.T) {
 }
 
 func TestCompileFilterRegex(t *testing.T) {
-	t.Run("nil filter yields nil regex", func(t *testing.T) {
-		re, err := compileFilterRegex(nil)
-		if err != nil || re != nil {
-			t.Fatalf("expected nil,nil got %v,%v", re, err)
-		}
-	})
-
-	t.Run("blank regex yields nil regex", func(t *testing.T) {
-		re, err := compileFilterRegex(&v1alpha1.Filter{Regex: "  "})
-		if err != nil || re != nil {
-			t.Fatalf("expected nil,nil got %v,%v", re, err)
-		}
-	})
-
-	t.Run("valid regex compiled", func(t *testing.T) {
-		re, err := compileFilterRegex(&v1alpha1.Filter{Regex: "foo.*"})
-		if err != nil || re == nil {
-			t.Fatalf("expected compiled regex, got %v,%v", re, err)
-		}
-	})
-
-	t.Run("invalid regex returns error", func(t *testing.T) {
-		_, err := compileFilterRegex(&v1alpha1.Filter{Regex: "("})
-		if err == nil {
-			t.Fatal("expected error for invalid regex, got nil")
-		}
-	})
+	cases := []struct {
+		name    string
+		filter  *v1alpha1.Filter
+		wantRe  bool
+		wantErr bool
+	}{
+		{name: "nil filter yields nil regex"},
+		{name: "blank regex yields nil regex", filter: &v1alpha1.Filter{Regex: "  "}},
+		{name: "valid regex compiled", filter: &v1alpha1.Filter{Regex: "foo.*"}, wantRe: true},
+		{name: "invalid regex returns error", filter: &v1alpha1.Filter{Regex: "("}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			re, err := compileFilterRegex(tc.filter)
+			if (err != nil) != tc.wantErr || (re != nil) != tc.wantRe {
+				t.Fatalf("got regex %v, err %v; want regex=%v err=%v", re, err, tc.wantRe, tc.wantErr)
+			}
+		})
+	}
 }
 
 func TestMatchesFilter(t *testing.T) {
