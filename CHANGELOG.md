@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.12.0...v0.12.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **go:** Update Go toolchain ([#246](https://github.com/maverickd650/rss2discord-operator/issues/246)) ([d75a857](https://github.com/maverickd650/rss2discord-operator/commit/d75a85754446962d9a957f89619e458e4340f16a))
+* **go:** Update image golang (1e93e00 → 162be52) ([#242](https://github.com/maverickd650/rss2discord-operator/issues/242)) ([bd7ffc9](https://github.com/maverickd650/rss2discord-operator/commit/bd7ffc9765a2f0288ac1974e915ecea820b3766d))
+
 ## [0.12.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.11.2...v0.12.0) (2026-10-06)
 
 
