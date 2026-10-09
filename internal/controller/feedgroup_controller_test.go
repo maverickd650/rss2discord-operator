@@ -335,6 +335,22 @@ func newTestReconciler(discordServer *MockDiscordServer) *FeedGroupReconciler {
 	return r
 }
 
+// setUpFeedGroup starts mock Discord and RSS servers (closed when the spec
+// ends), creates the webhook Secret and a FeedGroup watching the RSS server,
+// and returns the servers plus a reconciler wired to them. Opts adjust the
+// FeedGroup before it is created.
+func setUpFeedGroup(ctx context.Context, name, secretName, feedXML string, opts ...feedGroupOption) (*MockDiscordServer, *MockRSSServer, *FeedGroupReconciler) {
+	GinkgoHelper()
+	discordServer := NewMockDiscordServer()
+	DeferCleanup(discordServer.Close)
+	rssServer := NewMockRSSServer(feedXML)
+	DeferCleanup(rssServer.Close)
+
+	createWebhookSecret(ctx, secretName, discordServer.URL())
+	Expect(k8sClient.Create(ctx, newTestFeedGroup(name, secretName, rssServer.URL(), opts...))).To(Succeed())
+	return discordServer, rssServer, newTestReconciler(discordServer)
+}
+
 // reconcileFeedGroup runs one reconcile of the named FeedGroup in the test namespace.
 func reconcileFeedGroup(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
 	return r.Reconcile(ctx, reconcile.Request{
@@ -393,12 +409,8 @@ var _ = Describe("FeedGroup Controller", func() {
 
 	Describe("Successful RSS to Discord flow", func() {
 		It("should fetch RSS entries and track status", func() {
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
-			By("Creating a mock RSS feed server")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			By("Creating mock Discord and RSS servers, the webhook secret and the FeedGroup")
+			_, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupNameBasic, discordWebhookSecretName, createRSSFeed(
 				testEntry{
 					title:       "Test Article 1",
 					description: "This is a test article",
@@ -413,20 +425,11 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "article-2",
 				},
-			))
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, discordWebhookSecretName, discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupNameBasic, discordWebhookSecretName, rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+			), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.Format = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.Link}})"
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
-			reconciler := newTestReconciler(discordServer)
 
 			result, err := reconcileFeedGroup(ctx, reconciler, feedGroupNameBasic)
 			Expect(err).NotTo(HaveOccurred())
@@ -454,12 +457,8 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should send a stored ETag on the next reconcile and skip re-processing on 304", func() {
 			const feedGroupName = "test-feedgroup-conditional-get"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
-			By("Creating a mock RSS feed server that returns an ETag")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			By("Creating mock Discord and RSS servers, the webhook secret and the FeedGroup")
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-conditional", createRSSFeed(
 				testEntry{
 					title:       "Conditional Article",
 					description: "First fetch",
@@ -467,18 +466,10 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "conditional-article",
 				},
-			))
+			), withRetries("5m", 3))
+
+			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer.SetETag(`"v1"`)
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-conditional", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-conditional", rssServer.URL(), withRetries("5m", 3))
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
 
 			By("Running the first reconciliation")
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -520,12 +511,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-conditional-get-retry"
 
 			By("Creating mock Discord webhook server that fails the first delivery")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-			discordServer.FailNextRequests(1, http.StatusInternalServerError)
-
-			By("Creating a mock RSS feed server that returns an ETag")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-conditional-retry", createRSSFeed(
 				testEntry{
 					title:       "Retry Article",
 					description: "Should survive a failed send",
@@ -533,18 +519,11 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "retry-article",
 				},
-			))
+			), withRetries("5m", 3))
+			discordServer.FailNextRequests(1, http.StatusInternalServerError)
+
+			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer.SetETag(`"v1"`)
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-conditional-retry", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-conditional-retry", rssServer.URL(), withRetries("5m", 3))
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
 
 			By("Running the first reconciliation, where the Discord send fails")
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -578,30 +557,16 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should fall back to catch-up instead of silently skipping every entry forever", func() {
 			const feedGroupName = "test-feedgroup-stale-lastseen"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
-			By("Creating a mock RSS feed server with a single entry")
-			rssServer := NewMockRSSServer(createRSSFeed(testEntry{
+			By("Creating mock Discord and RSS servers, the webhook secret and the FeedGroup")
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-stale-lastseen", createRSSFeed(testEntry{
 				title:       "Original Article",
 				description: "The only entry in the feed's initial window",
 				link:        "https://example.com/original-article",
 				pubDate:     time.Now().Add(-1 * time.Hour).Format(time.RFC1123Z),
 				guid:        "original-article",
-			}))
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-stale-lastseen", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-stale-lastseen", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+			}), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.CatchUpLimit = 5
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
 
 			By("Running the first reconciliation, which sends and records the original entry")
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -683,10 +648,6 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should cap how many backlog entries are sent on first reconcile", func() {
 			const feedGroupName = "test-feedgroup-catchup"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
 			By("Creating a mock RSS feed server with a long backlog")
 			entries := make([]testEntry, 0, 10)
 			for i := range 10 {
@@ -698,20 +659,12 @@ var _ = Describe("FeedGroup Controller", func() {
 					guid:        fmt.Sprintf("backlog-%d", i),
 				})
 			}
-			rssServer := NewMockRSSServer(createRSSFeed(entries...))
-			defer rssServer.Close()
 
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-catchup", discordServer.URL())
-
-			By("Creating FeedGroup resource with a catch-up limit of 3")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-catchup", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+			discordServer, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-catchup", createRSSFeed(entries...), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.CatchUpLimit = 3
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
-			reconciler := newTestReconciler(discordServer)
 
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
@@ -723,10 +676,6 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should deliver newest entries and advance the watermark for feeds without publish dates", func() {
 			const feedGroupName = "test-feedgroup-nodate"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
 			noDate := func(title, guid string) testEntry {
 				// pubDate is left empty on purpose: this feed has no publish
 				// dates, which is exactly the case the ordering fallback covers.
@@ -734,23 +683,13 @@ var _ = Describe("FeedGroup Controller", func() {
 			}
 
 			By("Creating a mock RSS feed (newest-first, no pubDate) with a 3-entry backlog")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-nodate", createRSSFeed(
 				noDate("Article C", "c"), // index 0 = newest by feed convention
 				noDate("Article B", "b"),
 				noDate("Article A", "a"), // index 2 = oldest
-			))
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-nodate", discordServer.URL())
-
-			By("Creating FeedGroup resource with a catch-up limit of 2")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-nodate", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+			), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.CatchUpLimit = 2
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
 
 			By("Running the first reconcile")
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -785,12 +724,8 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should strip HTML from entry descriptions", func() {
 			const feedGroupName = "test-feedgroup-html"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
-			By("Creating a mock RSS feed server with an HTML description")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			By("Creating mock Discord and RSS servers, the webhook secret and the FeedGroup")
+			discordServer, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-html", createRSSFeed(
 				testEntry{
 					title:       "HTML Article",
 					description: "&lt;p&gt;First paragraph.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;One&lt;/li&gt;&lt;/ul&gt;",
@@ -798,20 +733,11 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "html-article",
 				},
-			))
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-html", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-html", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+			), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.Format = "{{.Description}}"
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
-			reconciler := newTestReconciler(discordServer)
 
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
@@ -895,12 +821,8 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should drop a non-http(s) entry link/image instead of forwarding it into the embed", func() {
 			const feedGroupName = "test-feedgroup-embed-unsafe-url"
 
-			By("Creating mock Discord webhook server")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-
-			By("Creating a mock RSS feed server whose entry link/enclosure use a non-http(s) scheme")
-			rssServer := NewMockRSSServer(`<?xml version="1.0" encoding="UTF-8"?>
+			By("Creating mock Discord and RSS servers, the webhook secret and the FeedGroup")
+			discordServer, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-embed-unsafe-url", `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Test Feed</title>
@@ -914,22 +836,13 @@ var _ = Describe("FeedGroup Controller", func() {
       <enclosure url="data:image/png;base64,AAAA" type="image/png" />
     </item>
   </channel>
-</rss>`)
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-embed-unsafe-url", discordServer.URL())
-
-			By("Creating FeedGroup resource with embed enabled")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-embed-unsafe-url", rssServer.URL(), withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
+</rss>`, withRetries("5m", 3), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.Embed = &rss2discordv1alpha1.EmbedSpec{
 					Enabled: true,
 				}
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
 
 			By("Running reconciliation")
-			reconciler := newTestReconciler(discordServer)
 
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
@@ -1289,12 +1202,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-send-error-no-skip"
 
 			By("Creating a mock Discord server that fails only the very first delivery")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-			discordServer.FailNextRequests(1, http.StatusInternalServerError)
-
-			By("Creating a mock RSS feed with an older entry and a newer entry")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-send-error-no-skip", createRSSFeed(
 				testEntry{
 					title:       "Older Article",
 					description: "Should not be skipped after failing to send",
@@ -1309,17 +1217,10 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "newer-article",
 				},
-			))
-			defer rssServer.Close()
+			), withRetries("1m", 3))
+			discordServer.FailNextRequests(1, http.StatusInternalServerError)
 
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-send-error-no-skip", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error-no-skip", rssServer.URL(), withRetries("1m", 3))
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
+			By("Creating a mock RSS feed with an older entry and a newer entry")
 
 			By("Reconciling once: the older entry fails to send")
 			_, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -1347,12 +1248,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-send-error-etag"
 
 			By("Creating a mock Discord server that fails the first two deliveries, then succeeds")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-			discordServer.FailNextRequests(2, http.StatusInternalServerError)
-
-			By("Creating a mock RSS feed server that returns an ETag")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-send-error-etag", createRSSFeed(
 				testEntry{
 					title:       "ETag Article",
 					description: "Should not be stranded by a premature 304",
@@ -1360,18 +1256,11 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "etag-article",
 				},
-			))
+			), withRetries("1m", 2))
+			discordServer.FailNextRequests(2, http.StatusInternalServerError)
+
+			By("Creating a mock RSS feed server that returns an ETag")
 			rssServer.SetETag(`"v1"`)
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-send-error-etag", discordServer.URL())
-
-			By("Creating FeedGroup resource with Retries=2, so the second failure exhausts retries")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-send-error-etag", rssServer.URL(), withRetries("1m", 2))
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
 
 			By("Reconciling twice, exhausting the configured retries on a still-unsent entry")
 			for range 2 {
@@ -1947,12 +1836,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			const feedGroupName = "test-feedgroup-rate-limited"
 
 			By("Creating a mock Discord webhook server that rate-limits the first delivery")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-			discordServer.FailNextRequestsRateLimited(1, "2")
-
-			By("Creating a mock RSS feed server that returns an ETag")
-			rssServer := NewMockRSSServer(createRSSFeed(
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-rate-limited", createRSSFeed(
 				testEntry{
 					title:       "Rate Limited Article",
 					description: "Should survive a 429",
@@ -1960,20 +1844,13 @@ var _ = Describe("FeedGroup Controller", func() {
 					pubDate:     time.Now().Format(time.RFC1123Z),
 					guid:        "rate-limited-article",
 				},
-			))
-			rssServer.SetETag(`"v1"`)
-			defer rssServer.Close()
-
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-rate-limited", discordServer.URL())
-
-			By("Creating FeedGroup resource")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-rate-limited", rssServer.URL(), func(fg *rss2discordv1alpha1.FeedGroup) {
+			), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.RetryInterval = "5m"
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
+			discordServer.FailNextRequestsRateLimited(1, "2")
 
-			reconciler := newTestReconciler(discordServer)
+			By("Creating a mock RSS feed server that returns an ETag")
+			rssServer.SetETag(`"v1"`)
 
 			By("Running reconciliation, where Discord rate-limits the send")
 			result, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -2006,11 +1883,6 @@ var _ = Describe("FeedGroup Controller", func() {
 		It("should stop sending the rest of a feed's entries after the first 429", func() {
 			const feedGroupName = "test-feedgroup-rate-limited-stop"
 
-			By("Creating a mock Discord server that rate-limits many deliveries")
-			discordServer := NewMockDiscordServer()
-			defer discordServer.Close()
-			discordServer.FailNextRequestsRateLimited(10, "2")
-
 			By("Creating a mock RSS feed with several catch-up entries")
 			entries := make([]testEntry, 0, 5)
 			for i := range 5 {
@@ -2022,20 +1894,13 @@ var _ = Describe("FeedGroup Controller", func() {
 					guid:        fmt.Sprintf("guid-%d", i),
 				})
 			}
-			rssServer := NewMockRSSServer(createRSSFeed(entries...))
-			defer rssServer.Close()
 
-			By("Creating a secret with Discord webhook URL")
-			createWebhookSecret(ctx, "discord-webhook-rl-stop", discordServer.URL())
-
-			By("Creating FeedGroup with a catch-up limit of 5")
-			feedGroup := newTestFeedGroup(feedGroupName, "discord-webhook-rl-stop", rssServer.URL(), func(fg *rss2discordv1alpha1.FeedGroup) {
+			By("Creating a mock Discord server that rate-limits many deliveries")
+			discordServer, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-rl-stop", createRSSFeed(entries...), func(fg *rss2discordv1alpha1.FeedGroup) {
 				fg.Spec.RetryInterval = "5m"
 				fg.Spec.CatchUpLimit = 5
 			})
-			Expect(k8sClient.Create(ctx, feedGroup)).To(Succeed())
-
-			reconciler := newTestReconciler(discordServer)
+			discordServer.FailNextRequestsRateLimited(10, "2")
 
 			By("Running reconciliation")
 			result, err := reconcileFeedGroup(ctx, reconciler, feedGroupName)
