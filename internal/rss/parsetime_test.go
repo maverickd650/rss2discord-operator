@@ -35,14 +35,19 @@ func referenceParseTime(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
 }
 
+const (
+	isoDateTime = "2016-11-22T08:29:01Z"
+	isoDate     = "2016-11-22"
+)
+
 var parseTimeCorpus = []string{
 	"",
 	" \t ",
-	"2016-11-22T08:29:01Z",
+	isoDateTime,
 	"2015-10-21T07:28:00+02:00",
 	"2015-10-21T07:28:00.123456Z",
 	"2015-10-21 07:28:00",
-	"2016-11-22",
+	isoDate,
 	"Tue, 22 Nov 2016 08:29:01 +0000",
 	"Wed, 21 Oct 2015 07:28:00 -0700",
 	"Wed, 21 Oct 2015 07:28:00 UTC",
@@ -60,6 +65,9 @@ var parseTimeCorpus = []string{
 	"21 Oct 2015",
 	"Wed",
 	"20151021",
+	"abcd-10-21", // dash at index 4 but non-digit year
+	"201x-10-21",
+	"12-3",
 	"2015/10/21",
 	"\t2015-10-21T07:28:00Z\n",
 }
@@ -97,8 +105,8 @@ func BenchmarkParseTime(b *testing.B) {
 	for _, tc := range []struct{ name, in string }{
 		{"RFC1123Z", "Tue, 22 Nov 2016 08:29:01 +0000"},
 		{"RFC1123", "Wed, 21 Oct 2015 07:28:00 GMT"},
-		{"RFC3339", "2016-11-22T08:29:01Z"},
-		{"dateOnly", "2016-11-22"},
+		{"RFC3339", isoDateTime},
+		{"dateOnly", isoDate},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -106,5 +114,23 @@ func BenchmarkParseTime(b *testing.B) {
 				_, _ = parseTime(tc.in)
 			}
 		})
+	}
+}
+
+func TestLooksISO(t *testing.T) {
+	cases := map[string]bool{
+		isoDate:            true,
+		isoDateTime:        true,
+		"abcd-10-21":       false,
+		"201x-10-21":       false,
+		"2016/11/22":       false,
+		"12-3":             false,
+		"":                 false,
+		"Tue, 22 Nov 2016": false,
+	}
+	for in, want := range cases {
+		if got := looksISO(in); got != want {
+			t.Errorf("looksISO(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
