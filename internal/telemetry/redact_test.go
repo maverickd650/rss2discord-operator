@@ -44,6 +44,14 @@ func TestRedactWebhookURL(t *testing.T) {
 			want:    "https://discord.com/api/webhooks/123456789",
 			changed: false,
 		},
+		{
+			// Documents current behaviour: a string url.Parse rejects is
+			// returned as-is, so it is not redacted.
+			name:    "unparsable URL returned unchanged",
+			in:      "https://discord.com/api/webhooks/123456789/%zz",
+			want:    "https://discord.com/api/webhooks/123456789/%zz",
+			changed: false,
+		},
 	}
 
 	for _, tt := range tests {
