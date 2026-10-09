@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"maps"
 	neturl "net/url"
 	"regexp"
@@ -36,6 +35,7 @@ import (
 	"text/template"
 	"time"
 
+	"golang.org/x/net/html"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1187,14 +1187,6 @@ func httpURLOrEmpty(rawURL string) string {
 	return rawURL
 }
 
-// htmlBlockTagRegex matches HTML tags that delimit block-level content (or
-// line breaks), which are converted to newlines so stripped text retains
-// paragraph/list structure instead of running together.
-var htmlBlockTagRegex = regexp.MustCompile(`(?i)</?\s*(p|li|br|div|h[1-6])\b[^>]*>`)
-
-// htmlTagRegex matches any remaining HTML tag, stripped entirely.
-var htmlTagRegex = regexp.MustCompile(`<[^>]+>`)
-
 // blankLineRegex collapses runs of 3+ newlines (left behind once tags are
 // stripped) down to a single blank line.
 var blankLineRegex = regexp.MustCompile(`\n{3,}`)
@@ -1214,13 +1206,63 @@ var continueReadingTextRegex = regexp.MustCompile(`(?i)continue reading\s*(\.{2,
 // Discord-friendly plain text. Many feeds (e.g. the Guardian's) ship these
 // as raw or escaped HTML, which Discord otherwise renders as literal tag
 // soup.
+//
+// Markup is removed with the HTML tokenizer rather than a regex so that a
+// ">" inside a quoted attribute or comment, or a bare "<" in prose, can't
+// derail tag detection, and so script/style bodies are dropped rather than
+// leaked as text. Block-level tags (p, li, br, div, h1-h6) become newlines
+// so paragraph and list structure survives.
 func stripHTML(input string) string {
 	input = continueReadingLinkRegex.ReplaceAllString(input, "")
 
-	text := htmlBlockTagRegex.ReplaceAllString(input, "\n")
-	text = htmlTagRegex.ReplaceAllString(text, "")
-	text = html.UnescapeString(text)
+	var sb strings.Builder
+	sb.Grow(len(input))
 
+	var skipUntil string // non-empty while inside a <script>/<style> element
+	z := html.NewTokenizer(strings.NewReader(input))
+	for {
+		tokenType := z.Next()
+		switch tokenType {
+		case html.ErrorToken:
+			return finishStrippedText(sb.String())
+		case html.TextToken:
+			if skipUntil == "" {
+				sb.Write(z.Text())
+			}
+		case html.StartTagToken, html.SelfClosingTagToken, html.EndTagToken:
+			name, _ := z.TagName()
+			tag := string(name)
+			switch {
+			case skipUntil != "":
+				if tag == skipUntil {
+					skipUntil = ""
+				}
+			case tag == "script" || tag == "style":
+				// A self-closing <script/> has no body to skip.
+				if tokenType == html.StartTagToken {
+					skipUntil = tag
+				}
+			case isBlockTag(tag):
+				sb.WriteByte('\n')
+			}
+		}
+	}
+}
+
+// isBlockTag reports whether tag delimits block-level content (or a line
+// break), which stripHTML converts to a newline.
+func isBlockTag(tag string) bool {
+	switch tag {
+	case "p", "li", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6":
+		return true
+	}
+	return false
+}
+
+// finishStrippedText normalizes whitespace in text left after tag removal:
+// trims each line, collapses runs of blank lines, and drops a trailing
+// plain-text "Continue reading" stub.
+func finishStrippedText(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimSpace(line)
