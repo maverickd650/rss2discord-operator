@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,9 +32,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -262,9 +265,9 @@ func (d *MockDiscordServer) DeliveryAttempts() int {
 // DiscordClientBuilder returns a DiscordClientBuilder that trusts this mock
 // server's self-signed TLS certificate.
 func (d *MockDiscordServer) DiscordClientBuilder() func(webhookURL string) *discord.Client {
-	client := d.server.Client()
+	httpClient := d.server.Client()
 	return func(webhookURL string) *discord.Client {
-		return discord.NewClientWithHTTP(webhookURL, client)
+		return discord.NewClientWithHTTP(webhookURL, httpClient)
 	}
 }
 
@@ -2153,5 +2156,61 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 			Expect(reconciler.Recorder).NotTo(BeNil())
 		})
+	})
+})
+
+// failingClient wraps a real client to inject API errors on specific calls,
+// for the reconcile error paths envtest can't produce on demand.
+type failingClient struct {
+	client.Client
+	getFeedGroupErr error
+	statusApplyErr  error
+}
+
+func (c *failingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*rss2discordv1alpha1.FeedGroup); ok && c.getFeedGroupErr != nil {
+		return c.getFeedGroupErr
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func (c *failingClient) Status() client.SubResourceWriter {
+	return &failingStatusWriter{SubResourceWriter: c.Client.Status(), applyErr: c.statusApplyErr}
+}
+
+type failingStatusWriter struct {
+	client.SubResourceWriter
+	applyErr error
+}
+
+func (w *failingStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	if w.applyErr != nil {
+		return w.applyErr
+	}
+	return w.SubResourceWriter.Apply(ctx, obj, opts...)
+}
+
+var _ = Describe("Reconcile API error paths", func() {
+	It("should return a non-NotFound error from fetching the FeedGroup, so it is retried with backoff", func() {
+		boom := errors.New("apiserver unavailable")
+		r := &FeedGroupReconciler{Client: &failingClient{Client: k8sClient, getFeedGroupErr: boom}, Scheme: k8sClient.Scheme()}
+
+		res, err := reconcileFeedGroupNow(ctx, r, "does-not-matter")
+
+		Expect(err).To(MatchError(boom))
+		Expect(res).To(Equal(reconcile.Result{}))
+	})
+
+	It("should surface a failed status write instead of reporting a successful reconcile", func() {
+		const feedGroupName = "test-feedgroup-status-apply-error"
+		_, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-apply-error", createRSSFeed(
+			testEntry{title: "Apply Error", link: "https://example.com/apply-error", guid: "apply-error", pubDate: time.Now().Format(time.RFC1123Z)},
+		))
+		boom := errors.New("status apply rejected")
+		reconciler.Client = &failingClient{Client: k8sClient, statusApplyErr: boom}
+
+		_, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+
+		Expect(err).To(MatchError(boom))
 	})
 })

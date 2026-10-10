@@ -618,9 +618,38 @@ func TestClampText(t *testing.T) {
 		t.Errorf("clampText(short) = %q", got)
 	}
 	long := strings.Repeat("é", 100) // 2 bytes per rune
-	got := clampText(long, 51)
-	if len(got) > 51 || !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
-		t.Errorf("clampText split a rune or overshot: len=%d valid=%v %q", len(got), utf8.ValidString(got), got)
+	// Budgets 50-51 land the cut mid-rune for one parity and on a boundary
+	// for the other, so both branches of the UTF-8 backoff run.
+	for _, budget := range []int{50, 51} {
+		got := clampText(long, budget)
+		if len(got) > budget || !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
+			t.Errorf("clampText(budget=%d) split a rune or overshot: len=%d valid=%v %q", budget, len(got), utf8.ValidString(got), got)
+		}
+	}
+}
+
+// TestEnsureFeedStatuses_NormalizesOversizedStoredValues asserts values
+// persisted before the status fields were bounded are brought within the
+// CRD limits on load (an oversized one would be rejected on every write),
+// while the long watermark still matches the entry it was derived from.
+func TestEnsureFeedStatuses_NormalizesOversizedStoredValues(t *testing.T) {
+	longID := "https://example.com/" + strings.Repeat("p", 4000)
+	fg, feed := newMetricsFeedGroup("normalize-ns", "normalize", "")
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	fs.LastError = strings.Repeat("e", 30000)
+	fs.LastSeenEntry = longID
+
+	ensureFeedStatuses(fg)
+
+	fs = feedStatusFor(fg, feed.RSSUrl)
+	if len(fs.LastError) > maxStatusTextBytes {
+		t.Errorf("LastError is %d bytes after load, want <= %d", len(fs.LastError), maxStatusTextBytes)
+	}
+	if len(fs.LastSeenEntry) > maxStatusTextBytes {
+		t.Errorf("LastSeenEntry is %d bytes after load, want <= %d", len(fs.LastSeenEntry), maxStatusTextBytes)
+	}
+	if !entriesContainID([]rss.Entry{{ID: longID}}, fs.LastSeenEntry) {
+		t.Error("normalized watermark no longer matches the entry it was derived from")
 	}
 }
 
@@ -675,4 +704,39 @@ func TestFeedGroupStatusWorstCaseStaysUnderBudget(t *testing.T) {
 		t.Fatalf("worst-case status is %d bytes, over the %d budget", len(raw), budget)
 	}
 	t.Logf("worst-case status: %d bytes", len(raw))
+}
+
+// TestRecordConfigError_EventFiresOncePerDistinctError asserts the
+// InvalidConfig Warning Event is emitted on the reconcile a config error first
+// appears -- and not again while the same error persists -- since a
+// deterministic misconfiguration has no RetryCount to gate it on.
+func TestRecordConfigError_EventFiresOncePerDistinctError(t *testing.T) {
+	fg, feed := newMetricsFeedGroup("config-error-ns", "config-error", "")
+	fs := feedStatusFor(fg, feed.RSSUrl)
+	recorder := events.NewFakeRecorder(10)
+	r := &FeedGroupReconciler{Recorder: recorder}
+
+	r.recordConfigError(fg, fs, feed.RSSUrl, errors.New("bad regex"))
+	select {
+	case ev := <-recorder.Events:
+		if !strings.Contains(ev, reasonConfigError) || !strings.Contains(ev, "bad regex") {
+			t.Errorf("event %q should name %s and the cause", ev, reasonConfigError)
+		}
+	default:
+		t.Fatal("expected an Event the first time the config error appears")
+	}
+
+	r.recordConfigError(fg, fs, feed.RSSUrl, errors.New("bad regex"))
+	select {
+	case ev := <-recorder.Events:
+		t.Fatalf("unexpected repeat Event for an unchanged error: %s", ev)
+	default:
+	}
+
+	r.recordConfigError(fg, fs, feed.RSSUrl, errors.New("a different typo"))
+	select {
+	case <-recorder.Events:
+	default:
+		t.Error("a changed error message should fire a fresh Event")
+	}
 }
