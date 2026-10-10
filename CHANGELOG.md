@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.12.1...v0.12.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* fix vulernability in cel ([#249](https://github.com/maverickd650/rss2discord-operator/issues/249)) ([05418bd](https://github.com/maverickd650/rss2discord-operator/commit/05418bd7cf10c0d5066cb1182ffe0009bcc7ffd6))
+* redo strip html ([#251](https://github.com/maverickd650/rss2discord-operator/issues/251)) ([08977d4](https://github.com/maverickd650/rss2discord-operator/commit/08977d4442e3c6bcf672070a769759a2528ef785))
+* stop self-triggered reconcile loop, cap permanent backoff, pace Discord sends, bound status size ([#258](https://github.com/maverickd650/rss2discord-operator/issues/258)) ([0ab03b2](https://github.com/maverickd650/rss2discord-operator/commit/0ab03b242710c49b951468e75423af1b0146952d))
+* stop webhook token leaking via parse errors; harden span redaction ([#257](https://github.com/maverickd650/rss2discord-operator/issues/257)) ([37fda3f](https://github.com/maverickd650/rss2discord-operator/commit/37fda3fb6a6ac78e6ac77bd35707d7e0c1bfba21))
+
+
+### Performance Improvements
+
+* **rss:** avoid failed time.Parse attempts in parseTime ([#252](https://github.com/maverickd650/rss2discord-operator/issues/252)) ([5f63b56](https://github.com/maverickd650/rss2discord-operator/commit/5f63b56287b6a41efe626989493b60eb961a52e2))
+
 ## [0.12.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.12.0...v0.12.1) (2026-10-09)
 
 
