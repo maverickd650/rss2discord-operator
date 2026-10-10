@@ -86,3 +86,45 @@ func FuzzControllerSanitizers(f *testing.F) {
 		}
 	})
 }
+
+// FuzzStatusClamps checks the invariants the bounded status fields rely on:
+// clampText never exceeds its byte budget or splits a UTF-8 sequence, and
+// clampWatermark always fits LastSeenEntry and is stable (the same identity
+// maps to the same stored value on every reconcile, and re-clamping a stored
+// value is a no-op -- otherwise the watermark would never match).
+func FuzzStatusClamps(f *testing.F) {
+	f.Add("", 16)
+	f.Add("short", 16)
+	f.Add(strings.Repeat("é", 100), 51) // 2-byte runes, odd budget forces a mid-rune backoff
+	f.Add(strings.Repeat("\U0001F600", 50), 17)
+	f.Add("\xff\xfe\x80"+strings.Repeat("x", 100), 20)
+	f.Add("https://example.com/"+strings.Repeat("a", 3000), maxStatusTextBytes)
+
+	f.Fuzz(func(t *testing.T, input string, budget int) {
+		// clampText is only ever called with the package's positive budgets;
+		// room for the 3-byte ellipsis is its documented minimum.
+		budget = 3 + int(uint(budget)%5000)
+
+		got := clampText(input, budget)
+		if len(got) > budget {
+			t.Fatalf("clampText(%q, %d) = %d bytes, over budget", input, budget, len(got))
+		}
+		if utf8.ValidString(input) && !utf8.ValidString(got) {
+			t.Fatalf("clampText(%q, %d) split a UTF-8 sequence: %q", input, budget, got)
+		}
+		if len(input) <= budget && got != input {
+			t.Fatalf("clampText(%q, %d) altered input that already fit: %q", input, budget, got)
+		}
+
+		mark := clampWatermark(input)
+		if len(mark) > maxStatusTextBytes {
+			t.Fatalf("clampWatermark(%q) = %d bytes, over the %d limit", input, len(mark), maxStatusTextBytes)
+		}
+		if again := clampWatermark(mark); again != mark {
+			t.Fatalf("clampWatermark is not idempotent: %q -> %q", mark, again)
+		}
+		if clampWatermark(input) != mark {
+			t.Fatalf("clampWatermark(%q) is not deterministic", input)
+		}
+	})
+}

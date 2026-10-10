@@ -66,4 +66,18 @@ spec:
           has had sustained Discord send errors on feed {{ $labels.rss_url }}
           (reason: {{ $labels.reason }}) for at least 15m.
           Check the webhook URL and the FeedGroup status conditions.
+    - alert: RSS2DiscordFeedEntriesSkipped
+      expr: |-
+        sum by (namespace, name, rss_url) (
+          increase(rss2discord_feed_operations_total{outcome="skipped"}[15m])
+        ) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: FeedGroup {{ $labels.namespace }}/{{ $labels.name }} gave up on an entry from feed {{ $labels.rss_url }}
+        description: >-
+          FeedGroup {{ $labels.namespace }}/{{ $labels.name }}
+          skipped an entry from feed {{ $labels.rss_url }} after exhausting its retries
+          because it could not be rendered with the feed's template, so it was not delivered.
+          See the FeedGroup's Warning Events and Delivered condition for the entry and cause.
 

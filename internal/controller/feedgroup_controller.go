@@ -34,6 +34,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	corev1 "k8s.io/api/core/v1"
@@ -46,9 +47,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/maverickd650/rss2discord-operator/api/v1alpha1"
 	acv1alpha1 "github.com/maverickd650/rss2discord-operator/api/v1alpha1/applyconfiguration/api/v1alpha1"
@@ -69,15 +72,11 @@ const defaultMessageFormat = "**{{.Title}}**\n{{.Description}}\n[Read more]({{.L
 
 // maxPermanentBackoff is the ceiling for per-feed exponential backoff on
 // permanent fetch failures (e.g. HTTP 404). Once the computed backoff would
-// exceed this, the feed's BackoffUntil is set to permanentBackoffSentinel and
-// it is excluded from all future reconciles until the FeedGroup spec changes.
+// exceed this, the feed keeps being retried at this cadence indefinitely:
+// "permanent" classifications (a 403 from a WAF blip, a 404 during a site
+// migration) are often only long-lived, and a few requests a day is a cheap
+// price for a feed that recovers on its own without a spec edit.
 const maxPermanentBackoff = 6 * time.Hour
-
-// permanentBackoffSentinel is the BackoffUntil value stored once a permanently
-// failed feed has exhausted its exponential backoff. It is a date far enough in
-// the future that it will never be reached in practice; a generation bump on
-// the FeedGroup spec is the only intended recovery path.
-const permanentBackoffSentinel = "9999-01-01T00:00:00Z"
 
 // maxLastSentPerFeed bounds how many sent-entry hashes are retained per feed
 // in Status.LastSent. Without a cap this map grows by one key per sent
@@ -108,6 +107,48 @@ const maxDiscordMessageLength = 2000
 // without this a FeedGroup at that cap would still open 50 simultaneous
 // outbound connections every reconcile.
 const maxConcurrentFetches = 10
+
+// maxStatusTextBytes bounds free-text status fields (FeedStatus.LastError,
+// LastSeenEntry and condition messages). FeedGroup.Status lives in a single
+// etcd object (~1.5MB hard limit) and holds up to 50 feeds, so unbounded
+// error strings or identifiers copied from feeds/servers could otherwise push
+// it over and make every status write fail. Byte-based, so it also satisfies
+// the CRD's character-based MaxLength.
+const maxStatusTextBytes = 2048
+
+// maxConditionMessageBytes is the tighter cap for per-feed condition
+// messages, which duplicate LastError and are stored twice per feed.
+const maxConditionMessageBytes = 1024
+
+// clampText truncates s to at most max bytes without splitting a UTF-8
+// sequence, marking the cut with an ellipsis.
+func clampText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	const ellipsis = "…"
+	cut := max - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
+}
+
+// errText is err's message bounded for storage in FeedStatus.LastError.
+func errText(err error) string {
+	return clampText(err.Error(), maxStatusTextBytes)
+}
+
+// clampWatermark returns id unchanged when it fits in FeedStatus.LastSeenEntry,
+// otherwise a stable digest of it. Applied on both the store and compare
+// sides, so a long identity still matches itself across reconciles.
+func clampWatermark(id string) string {
+	if len(id) <= maxStatusTextBytes {
+		return id
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
 
 // FeedGroupReconciler reconciles a FeedGroup object
 type FeedGroupReconciler struct {
@@ -161,14 +202,14 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	ensureFeedStatuses(&feedGroup)
 
-	// A spec change (generation bump) is the intended recovery path for feeds
-	// that have been placed in permanent backoff (BackoffUntil set to the
-	// sentinel). Clear BackoffUntil and RetryCount for every feed so the new
-	// generation gets a fresh retry cycle; without resetting RetryCount the
-	// first retry after clearing BackoffUntil would compute a backoff of
-	// base*2^oldRetryCount, which may exceed maxPermanentBackoff and
-	// immediately re-sentinel the feed.
-	if feedGroup.Generation > feedGroup.Status.ObservedGeneration {
+	// A spec change (generation bump) lets a feed in permanent backoff retry
+	// right away instead of waiting out its BackoffUntil. Clear BackoffUntil
+	// and RetryCount for every feed so the new generation gets a fresh retry
+	// cycle; without resetting RetryCount the first retry after clearing
+	// BackoffUntil would compute a backoff of base*2^oldRetryCount, which
+	// would immediately jump back to maxPermanentBackoff.
+	specChanged := feedGroup.Generation > feedGroup.Status.ObservedGeneration
+	if specChanged {
 		clearPermanentBackoffs(&feedGroup)
 	}
 
@@ -202,6 +243,10 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	discordClient := discordBuilder(webhookURL)
 
 	reconcileNow := time.Now().UTC()
+	// An unparsable Interval is reported by requeueWithStatus below; here it
+	// only feeds the due check, so fall back rather than bail out early.
+	pollInterval, _ := parseDurationWithDefault(feedGroup.Spec.Interval, 30*time.Minute)
+	var nextDue time.Duration // soonest a feed skipped as not-yet-due becomes due
 	activeFeeds := make([]v1alpha1.FeedSpec, 0, len(feedGroup.Spec.Feeds))
 	for _, feed := range feedGroup.Spec.Feeds {
 		if feed.RSSUrl == "" || feed.Paused {
@@ -210,7 +255,22 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Skip feeds that are in permanent-failure backoff. The skip happens
 		// here, before the fetch fan-out, so backed-off feeds emit no metrics
 		// and incur no outbound HTTP calls during their backoff window.
-		if fs := feedStatusFor(&feedGroup, feed.RSSUrl); fs != nil && feedInBackoff(fs.BackoffUntil, reconcileNow) {
+		fs := feedStatusFor(&feedGroup, feed.RSSUrl)
+		if fs != nil && feedInBackoff(fs.BackoffUntil, reconcileNow) {
+			continue
+		}
+		// Reconciles are also triggered by things other than the interval
+		// timer (operator restart, leader failover, retry cadence driven by a
+		// sibling feed), so don't refetch a healthy feed that was checked
+		// less than one interval ago.
+		if fs != nil && !feedDue(fs, pollInterval, reconcileNow, specChanged) {
+			// Not due yet: make sure the requeue below doesn't sleep past
+			// the moment it will be (e.g. after a restart mid-interval).
+			if last, err := time.Parse(time.RFC3339, fs.LastChecked); err == nil {
+				if until := last.Add(pollInterval).Sub(reconcileNow); nextDue == 0 || until < nextDue {
+					nextDue = until
+				}
+			}
 			continue
 		}
 		activeFeeds = append(activeFeeds, feed)
@@ -276,7 +336,11 @@ func (r *FeedGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		fallback = 5 * time.Minute
 	}
 
-	return r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback, nil, true)
+	result, err := r.requeueWithStatus(ctx, &feedGroup, statusSnapshot, interval, fallback, nil, true)
+	if err == nil && nextDue > 0 && nextDue < result.RequeueAfter {
+		result.RequeueAfter = max(nextDue, minParsedInterval)
+	}
+	return result, err
 }
 
 // processFeed fetches/filters/sends entries for a single feed and updates
@@ -301,7 +365,7 @@ func (r *FeedGroupReconciler) processFeed(
 		// LastChecked rather than looking freshly checked every retry.
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
 		class := classifyFetchError(fetchErr)
-		fs.LastError = fetchErr.Error()
+		fs.LastError = errText(fetchErr)
 		fs.RetryCount++
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, fetchErrorOutcome(class)).Inc()
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionFalse,
@@ -495,13 +559,14 @@ func (r *FeedGroupReconciler) sendNewEntries(
 
 	for _, entry := range entries {
 		if hasSeenID && !foundLastSeen {
-			if entryIdentity(entry) == lastSeenID {
+			if clampWatermark(entryIdentity(entry)) == lastSeenID {
 				foundLastSeen = true
 			}
 			continue
 		}
 
-		entryKey := computeEntryKey(entry)
+		identity := entryIdentity(entry)
+		entryKey := hashIdentity(identity)
 		if _, alreadySent := fs.LastSent[entryKey]; alreadySent {
 			continue
 		}
@@ -513,7 +578,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		discordMessage, err := buildDiscordMessage(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, &feed, entry)
 		if err != nil {
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
-			fs.LastError = err.Error()
+			fs.LastError = errText(err)
 			fs.RetryCount++
 			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeRenderError).Inc()
 			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
@@ -529,6 +594,17 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			// stuck template would emit a fresh Warning Event every poll
 			// interval forever.
 			maxRetries := maxRetryCount(feedGroup.Spec.Retries)
+			if fs.RetryCount > maxRetries && otherEntryRenders(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, &feed, entries, entry) {
+				// Retries were exhausted a full reconcile ago and the entry
+				// still can't render, yet a sibling entry renders fine with
+				// the same templates: the problem is this entry's content, it
+				// never will render, and holding the watermark here would
+				// block every newer entry behind it forever. Drop it and carry
+				// on. If no entry renders, the templates themselves are broken
+				// and skipping would just drain the feed, so keep holding.
+				r.skipEntry(ctx, feedGroup, fs, feed, entry, identity, entryKey, "RenderFailed", err, now)
+				continue
+			}
 			if fs.RetryCount < maxRetries {
 				wantRetry = true
 			} else if fs.RetryCount == maxRetries {
@@ -557,7 +633,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			Observe(time.Since(sendStart).Seconds())
 		if err != nil {
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
-			fs.LastError = err.Error()
+			fs.LastError = errText(err)
 
 			if rateLimitErr, ok := errors.AsType[*discord.RateLimitError](err); ok {
 				wantRetry = true
@@ -613,7 +689,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		}
 
 		fs.LastSent[entryKey] = now
-		fs.LastSeenEntry = entryIdentity(entry)
+		fs.LastSeenEntry = clampWatermark(identity)
 		fs.LastError = ""
 		fs.RetryCount = 0
 		fs.BackoffUntil = ""
@@ -623,6 +699,59 @@ func (r *FeedGroupReconciler) sendNewEntries(
 	}
 
 	return wantRetry, rateLimitRetryAfter, pending
+}
+
+// otherEntryRenders reports whether any entry other than skip renders
+// successfully with the feed's templates, which distinguishes "this entry is
+// the problem" from "the template is broken for everything".
+func otherEntryRenders(
+	feedGroup *v1alpha1.FeedGroup,
+	embedSpec *v1alpha1.EmbedSpec,
+	contentTmpl, descriptionTmpl, threadNameTmpl *template.Template,
+	feed *v1alpha1.FeedSpec,
+	entries []rss.Entry,
+	skip rss.Entry,
+) bool {
+	for _, other := range entries {
+		if entryIdentity(other) == entryIdentity(skip) {
+			continue
+		}
+		if _, err := buildDiscordMessage(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, feed, other); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// skipEntry gives up on a single entry whose retries are exhausted, so the
+// rest of the feed can proceed: it is recorded as handled (dedup key and
+// watermark) and the retry state is reset for the entry after it. The skip is
+// surfaced via a Warning Event, a metric outcome, and the Delivered condition
+// rather than LastError, which would otherwise mark the feed failing forever.
+func (r *FeedGroupReconciler) skipEntry(
+	ctx context.Context,
+	feedGroup *v1alpha1.FeedGroup,
+	fs *v1alpha1.FeedStatus,
+	feed v1alpha1.FeedSpec,
+	entry rss.Entry,
+	identity, entryKey, reason string,
+	cause error,
+	now string,
+) {
+	logf.FromContext(ctx).Error(cause, "skipping entry after exhausting retries", "url", feed.RSSUrl, "entry", identity)
+
+	fs.LastSent[entryKey] = now
+	fs.LastSeenEntry = clampWatermark(identity)
+	fs.LastError = ""
+	fs.RetryCount = 0
+	fs.BackoffUntil = ""
+	feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeSkipped).Inc()
+	setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
+		reasonEntrySkipped, fmt.Sprintf("skipped entry %q after %s: %v", clampText(entry.Title, 100), reason, cause), feedGroup.Generation)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(feedGroup, nil, corev1.EventTypeWarning, reasonEntrySkipped, "SkippedEntry",
+			"feed %s: skipped entry %q after exhausting retries (%s): %v", feed.RSSUrl, clampText(entry.Title, 100), reason, cause)
+	}
 }
 
 // markFeedCheckSuccess records that a feed was successfully checked this
@@ -637,23 +766,24 @@ func markFeedCheckSuccess(feedGroup *v1alpha1.FeedGroup) {
 
 // applyPermanentBackoff sets fs.BackoffUntil using exponential backoff
 // (permanentBackoffDuration, based on fs.RetryCount, which the caller has
-// already incremented for this failure), capped at maxPermanentBackoff via
-// the sentinel. Shared by the fetch- and send-permanent-failure paths so a
-// feed/entry that can't recover on its own backs off the same way instead of
-// retrying at full Interval cadence forever. reason/err identify the Warning
-// Event fired the first time the cap is reached -- not on every occurrence
-// after, since subsequent reconciles skip the feed entirely at the
-// active-feeds filter once BackoffUntil is the sentinel, so this branch is
-// never re-entered for the same failure.
+// already incremented for this failure), capped at maxPermanentBackoff. Shared
+// by the fetch- and send-permanent-failure paths so a feed/entry that can't
+// recover on its own backs off the same way instead of retrying at full
+// Interval cadence forever. reason/err identify the Warning Event fired the
+// first time the cap is reached -- not on every capped retry after, so a feed
+// that keeps failing at the cap doesn't emit an Event every few hours.
 func (r *FeedGroupReconciler) applyPermanentBackoff(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, rssURL, reason string, err error) {
 	base, _ := parseDurationWithDefault(feedGroup.Spec.RetryInterval, 5*time.Minute)
 	backoff := permanentBackoffDuration(int(fs.RetryCount), base)
 	if backoff >= maxPermanentBackoff {
-		fs.BackoffUntil = permanentBackoffSentinel
-		r.recordPersistentFailure(feedGroup, rssURL, reason, err)
-	} else {
-		fs.BackoffUntil = nextBackoffUntil(time.Now().UTC(), backoff)
+		firstCapped := fs.RetryCount <= 1 ||
+			permanentBackoffDuration(int(fs.RetryCount)-1, base) < maxPermanentBackoff
+		if firstCapped {
+			r.recordPersistentFailure(feedGroup, rssURL, reason, err)
+		}
+		backoff = maxPermanentBackoff
 	}
+	fs.BackoffUntil = nextBackoffUntil(time.Now().UTC(), backoff)
 }
 
 // recordPersistentFailure emits a Warning Event on feedGroup once a feed's
@@ -678,7 +808,7 @@ func (r *FeedGroupReconciler) recordPersistentFailure(feedGroup *v1alpha1.FeedGr
 // ConfigError (or its message changes, e.g. a different typo), not on every
 // subsequent reconcile of the same unresolved error.
 func (r *FeedGroupReconciler) recordConfigError(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, url string, err error) {
-	fs.LastError = err.Error()
+	fs.LastError = errText(err)
 	changed := setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
 		reasonConfigError, err.Error(), feedGroup.Generation)
 	if changed && r.Recorder != nil {
@@ -738,6 +868,10 @@ func ensureFeedStatuses(feedGroup *v1alpha1.FeedGroup) {
 		if fs.LastSent == nil {
 			fs.LastSent = map[string]string{}
 		}
+		// Normalize values stored before these fields were bounded; an
+		// oversized one would be rejected by the CRD schema on every write.
+		fs.LastError = clampText(fs.LastError, maxStatusTextBytes)
+		fs.LastSeenEntry = clampWatermark(fs.LastSeenEntry)
 		rebuilt = append(rebuilt, fs)
 		delete(existing, feed.RSSUrl)
 	}
@@ -777,7 +911,7 @@ func setFeedCondition(fs *v1alpha1.FeedStatus, condType string, status metav1.Co
 		Type:               condType,
 		Status:             status,
 		Reason:             reason,
-		Message:            message,
+		Message:            clampText(message, maxConditionMessageBytes),
 		ObservedGeneration: generation,
 	})
 }
@@ -1043,6 +1177,12 @@ const (
 // returned unchanged, since there's no generically safe way to normalize
 // arbitrary text.
 func normalizeIdentity(id string) string {
+	// Opaque GUIDs and title fallbacks are common and can't be URLs we
+	// normalize, so skip the (allocating) parse for anything that doesn't
+	// start with an http(s) scheme.
+	if len(id) < 7 || !strings.EqualFold(id[:4], schemeHTTP) {
+		return id
+	}
 	parsed, err := neturl.Parse(id)
 	if err != nil || (parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS) {
 		return id
@@ -1080,7 +1220,13 @@ func entryIdentity(entry rss.Entry) string {
 // entry and get re-sent as a duplicate -- defeating the point of having a
 // stable GUID-based identity in the first place.
 func computeEntryKey(entry rss.Entry) string {
-	hash := sha256.Sum256([]byte(entryIdentity(entry)))
+	return hashIdentity(entryIdentity(entry))
+}
+
+// hashIdentity is computeEntryKey for an identity the caller already
+// resolved, so a loop over entries doesn't normalize each URL twice.
+func hashIdentity(identity string) string {
+	hash := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(hash[:])
 }
 
@@ -1390,6 +1536,11 @@ func buildDiscordMessage(
 // runes were cut (0 if content already fit), so callers can report how
 // often/how severely truncation actually happens.
 func truncateMessage(content string, max int) (string, int) {
+	// len(content) >= rune count, so a byte length within max can't overflow;
+	// this skips the []rune allocation for the overwhelmingly common case.
+	if len(content) <= max {
+		return content, 0
+	}
 	runes := []rune(content)
 	if len(runes) <= max {
 		return content, 0
@@ -1433,7 +1584,7 @@ func pruneLastSent(sent map[string]string, max int) {
 // entryIdentity).
 func entriesContainID(entries []rss.Entry, id string) bool {
 	for _, entry := range entries {
-		if entryIdentity(entry) == id {
+		if clampWatermark(entryIdentity(entry)) == id {
 			return true
 		}
 	}
@@ -1482,6 +1633,22 @@ func maxRetryCount(specRetries int32) int32 {
 	return specRetries
 }
 
+// feedDue reports whether fs should be fetched this reconcile. A feed is due
+// when its spec just changed (force), it has never been checked, it has an
+// outstanding failure (those follow the RetryInterval cadence the group's
+// requeue already encodes), or a full interval has elapsed since its last
+// successful check. An unparsable LastChecked counts as due.
+func feedDue(fs *v1alpha1.FeedStatus, interval time.Duration, now time.Time, force bool) bool {
+	if force || fs.LastChecked == "" || fs.LastError != "" || fs.RetryCount > 0 {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, fs.LastChecked)
+	if err != nil {
+		return true
+	}
+	return !now.Before(last.Add(interval))
+}
+
 // feedInBackoff reports whether backoffUntil (a FeedStatus.BackoffUntil
 // RFC3339 timestamp) is still in the future relative to now. A malformed or
 // empty backoffUntil is treated as "not in backoff" so a bad value can never
@@ -1527,12 +1694,11 @@ func permanentBackoffDuration(retryCount int, base time.Duration) time.Duration 
 }
 
 // clearPermanentBackoffs resets BackoffUntil and RetryCount on every feed in
-// the group. Called when the FeedGroup spec generation advances, which is the
-// intended recovery path for feeds whose permanent backoff has been sentineled.
-// RetryCount is reset alongside BackoffUntil because leaving it at its old
-// value would cause the next permanentBackoffDuration call to compute a backoff
-// that immediately exceeds maxPermanentBackoff, re-sentineling the feed on the
-// very first retry after recovery.
+// the group. Called when the FeedGroup spec generation advances, so an edit
+// gives feeds in backoff an immediate fresh attempt. RetryCount is reset
+// alongside BackoffUntil because leaving it at its old value would cause the
+// next permanentBackoffDuration call to compute a backoff that immediately
+// jumps to maxPermanentBackoff on the very first retry after the edit.
 func clearPermanentBackoffs(feedGroup *v1alpha1.FeedGroup) {
 	for i := range feedGroup.Status.Feeds {
 		feedGroup.Status.Feeds[i].BackoffUntil = ""
@@ -1546,7 +1712,13 @@ func (r *FeedGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Recorder = mgr.GetEventRecorder("feedgroup-controller")
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.FeedGroup{}).
+		// Status is written by this controller, so reacting to those writes
+		// would re-enqueue every reconcile that changed anything (and, for a
+		// failing feed whose RetryCount ticks up each pass, loop at
+		// API-round-trip speed instead of RetryInterval). Only spec changes
+		// (generation bumps), creates and deletes matter; periodic work is
+		// driven by RequeueAfter.
+		For(&v1alpha1.FeedGroup{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("feedgroup").
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: r.MaxConcurrentReconciles,

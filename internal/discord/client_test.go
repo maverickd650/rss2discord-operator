@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -424,5 +425,161 @@ func TestSendMessage_RespectsTimeout(t *testing.T) {
 	err := c.SendMessageText(t.Context(), "hello")
 	if err == nil {
 		t.Fatal("expected timeout-related error, got nil")
+	}
+}
+
+// newBucketServer starts a TLS webhook server that answers 204 with the given
+// rate-limit headers, allows its host for the test's duration, and returns the
+// arrival time of each request it has served.
+func newBucketServer(t *testing.T, remaining, resetAfter string) (*httptest.Server, *[]time.Time) {
+	t.Helper()
+	var arrivals []time.Time
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		arrivals = append(arrivals, time.Now())
+		w.Header().Set("X-RateLimit-Remaining", remaining)
+		w.Header().Set("X-RateLimit-Reset-After", resetAfter)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	AllowedWebhookHosts["127.0.0.1"] = true
+	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+	return srv, &arrivals
+}
+
+// TestSendMessage_PacesWhenBucketEmpty asserts that a success response
+// reporting an empty bucket (X-RateLimit-Remaining: 0) makes the next send
+// through the same limiter wait for Reset-After rather than hit the server
+// early and get 429'd -- and that it does so without returning an error.
+func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
+	srv, arrivals := newBucketServer(t, "0", "0.2")
+
+	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
+	for _, text := range []string{"one", "two"} {
+		if err := c.SendMessageText(t.Context(), text); err != nil {
+			t.Fatalf("send %q: %v", text, err)
+		}
+	}
+	if len(*arrivals) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(*arrivals))
+	}
+	if gap := (*arrivals)[1].Sub((*arrivals)[0]); gap < 150*time.Millisecond {
+		t.Fatalf("second send arrived %v after the first, want it paced to ~200ms", gap)
+	}
+}
+
+// TestSendMessage_LongResetBecomesCooldown asserts a bucket that won't refill
+// within maxPaceWait is surfaced as a RateLimitError instead of blocking.
+func TestSendMessage_LongResetBecomesCooldown(t *testing.T) {
+	srv, arrivals := newBucketServer(t, "0", "30")
+
+	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
+	if err := c.SendMessageText(t.Context(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := errors.AsType[*RateLimitError](c.SendMessageText(t.Context(), "two")); !ok {
+		t.Fatal("expected *RateLimitError for a reset beyond maxPaceWait")
+	}
+	if len(*arrivals) != 1 {
+		t.Fatalf("expected the second send to be short-circuited, got %d requests", len(*arrivals))
+	}
+}
+
+// TestRateLimiterWait_ContextCancel asserts a paced wait ends when the
+// caller's context does.
+func TestRateLimiterWait_ContextCancel(t *testing.T) {
+	l := NewRateLimiter()
+	l.pace(testWebhookURL, time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := l.wait(ctx, testWebhookURL); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait() = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestNotePacing_IgnoresUnusableHeaders asserts a success response only
+// paces the next send when it reports an empty bucket with a usable
+// Reset-After; anything else must leave sends unthrottled.
+func TestNotePacing_IgnoresUnusableHeaders(t *testing.T) {
+	cases := []struct {
+		name      string
+		remaining string
+		reset     string
+	}{
+		{name: "no headers"},
+		{name: "bucket not empty", remaining: "3", reset: "1"},
+		{name: "reset missing", remaining: "0"},
+		{name: "reset malformed", remaining: "0", reset: "soon"},
+		{name: "reset zero", remaining: "0", reset: "0"},
+		{name: "reset negative", remaining: "0", reset: "-2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter := NewRateLimiter()
+			c := NewClientWithLimiter(testWebhookURL, nil, limiter)
+			h := http.Header{}
+			if tc.remaining != "" {
+				h.Set("X-RateLimit-Remaining", tc.remaining)
+			}
+			if tc.reset != "" {
+				h.Set("X-RateLimit-Reset-After", tc.reset)
+			}
+			c.notePacing(h)
+			if d := limiter.paceDelay(testWebhookURL); d > 0 {
+				t.Errorf("paceDelay = %v, want no pacing", d)
+			}
+			if _, cooling := limiter.reserve(testWebhookURL); cooling {
+				t.Error("unusable headers must not start a hard cooldown either")
+			}
+		})
+	}
+}
+
+// TestNotePacing_NilLimiterIsNoop asserts a Client built without a limiter
+// ignores rate-limit headers instead of dereferencing nil.
+func TestNotePacing_NilLimiterIsNoop(t *testing.T) {
+	c := NewClientWithHTTP(testWebhookURL, nil)
+	c.notePacing(http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset-After": {"1"}})
+}
+
+// TestSendMessage_ContextCanceledWhilePaced asserts a send stuck waiting on a
+// pacing delay returns the context's error promptly and never reaches the
+// server.
+func TestSendMessage_ContextCanceledWhilePaced(t *testing.T) {
+	srv, arrivals := newBucketServer(t, "5", "1")
+
+	limiter := NewRateLimiter()
+	limiter.pace(srv.URL, maxPaceWait)
+	c := NewClientWithLimiter(srv.URL, srv.Client(), limiter)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := c.SendMessageText(ctx, "hello")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SendMessageText() = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("returned after %v, want it to give up when the context ended", elapsed)
+	}
+	if len(*arrivals) != 0 {
+		t.Errorf("server saw %d requests, want none", len(*arrivals))
+	}
+}
+
+// TestPaceDelay_PrunesExpiredEntries asserts expired pacing entries are
+// dropped across the whole map, like reserve does for cooldowns, so a webhook
+// that is never sent to again doesn't linger.
+func TestPaceDelay_PrunesExpiredEntries(t *testing.T) {
+	l := NewRateLimiter()
+	l.pace("https://discord.com/api/webhooks/1/a", -time.Second)
+	l.pace("https://discord.com/api/webhooks/2/b", time.Minute)
+
+	if d := l.paceDelay("https://discord.com/api/webhooks/2/b"); d <= 0 {
+		t.Fatalf("live entry reported delay %v", d)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if got := len(l.pacing); got != 1 {
+		t.Errorf("pacing map has %d entries after pruning, want 1", got)
 	}
 }

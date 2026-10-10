@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,9 +32,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -262,9 +265,9 @@ func (d *MockDiscordServer) DeliveryAttempts() int {
 // DiscordClientBuilder returns a DiscordClientBuilder that trusts this mock
 // server's self-signed TLS certificate.
 func (d *MockDiscordServer) DiscordClientBuilder() func(webhookURL string) *discord.Client {
-	client := d.server.Client()
+	httpClient := d.server.Client()
 	return func(webhookURL string) *discord.Client {
-		return discord.NewClientWithHTTP(webhookURL, client)
+		return discord.NewClientWithHTTP(webhookURL, httpClient)
 	}
 }
 
@@ -357,11 +360,40 @@ func setUpFeedGroup(ctx context.Context, name, secretName, feedXML string, opts 
 	return discordServer, rssServer, newTestReconciler(discordServer)
 }
 
-// reconcileFeedGroup runs one reconcile of the named FeedGroup in the test namespace.
+// reconcileFeedGroup runs one reconcile of the named FeedGroup in the test
+// namespace, as if a full poll interval had passed since the previous one:
+// feeds checked "just now" are otherwise skipped as not yet due (see
+// feedDue). Use reconcileFeedGroupNow to exercise that gate itself.
 func reconcileFeedGroup(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
+	backdateFeedChecks(ctx, name, time.Hour)
+	return reconcileFeedGroupNow(ctx, r, name)
+}
+
+// reconcileFeedGroupNow runs one reconcile without advancing the clock.
+func reconcileFeedGroupNow(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
 	return r.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name, Namespace: testNamespace},
 	})
+}
+
+// backdateFeedChecks sets every checked feed's LastChecked to ago in the past,
+// e.g. an hour to make the next reconcile treat the feed as due.
+func backdateFeedChecks(ctx context.Context, name string, ago time.Duration) {
+	GinkgoHelper()
+	var fg rss2discordv1alpha1.FeedGroup
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, &fg); err != nil {
+		return // not created yet / already gone; the reconcile reports it
+	}
+	changed := false
+	for i := range fg.Status.Feeds {
+		if fg.Status.Feeds[i].LastChecked != "" {
+			fg.Status.Feeds[i].LastChecked = time.Now().Add(-ago).UTC().Format(time.RFC3339)
+			changed = true
+		}
+	}
+	if changed {
+		Expect(k8sClient.Status().Update(ctx, &fg)).To(Succeed())
+	}
 }
 
 // Helper function to create an RSS feed XML
@@ -488,7 +520,6 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(feedStatusFor(afterFirst, rssServer.URL()).ETag).To(Equal(`"v1"`))
 			lastSeenAfterFirst := feedStatusFor(afterFirst, rssServer.URL()).LastSeenEntry
 			Expect(lastSeenAfterFirst).NotTo(BeEmpty())
-			resourceVersionAfterFirst := afterFirst.ResourceVersion
 
 			By("Running a second reconciliation against the unchanged feed")
 			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
@@ -506,9 +537,41 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(feedStatusFor(afterSecond, rssServer.URL()).LastSeenEntry).To(Equal(lastSeenAfterFirst))
 			Expect(feedsWithError(afterSecond)).To(Equal(0))
 			Expect(feedStatusFor(afterSecond, rssServer.URL()).RetryCount).To(Equal(int32(0)))
+		})
 
-			By("Verifying the unchanged-status reconcile skipped the status write entirely")
-			Expect(afterSecond.ResourceVersion).To(Equal(resourceVersionAfterFirst))
+		It("should not refetch a feed that was checked less than one interval ago", func() {
+			const feedGroupName = "test-feedgroup-interval-gate"
+
+			discordServer, rssServer, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-interval-gate", createRSSFeed(
+				testEntry{
+					title:   "Gate Article",
+					link:    "https://example.com/gate-article",
+					pubDate: time.Now().Format(time.RFC1123Z),
+					guid:    "gate-article",
+				},
+			), withRetries("5m", 3))
+
+			_, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			By("Reconciling again immediately, e.g. after an operator restart or an unrelated trigger")
+			_, err = reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(1), "a feed checked moments ago must not be fetched again")
+			Expect(discordServer.MessageCount()).To(Equal(1))
+
+			By("Reconciling part-way through the interval, which must requeue for the remaining time, not a full interval")
+			backdateFeedChecks(ctx, feedGroupName, 20*time.Minute)
+			res, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(BeNumerically("~", 10*time.Minute, 10*time.Second))
+			Expect(rssServer.RequestCount()).To(Equal(1))
+
+			By("Reconciling once the interval has elapsed")
+			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rssServer.RequestCount()).To(Equal(2))
 		})
 	})
 
@@ -1117,9 +1180,10 @@ var _ = Describe("FeedGroup Controller", func() {
 			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying no second persistent-failure Event fires for the same ongoing failure")
+			By("Verifying no second persistent-failure Event fires, and the entry is held (not skipped) since the template is broken for every entry")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, updated)).To(Succeed())
 			Expect(feedStatusFor(updated, rssServer.URL()).RetryCount).To(Equal(int32(3)))
+			Expect(feedStatusFor(updated, rssServer.URL()).LastSeenEntry).To(BeEmpty())
 			Consistently(recorder.Events).ShouldNot(Receive())
 		})
 
@@ -1547,10 +1611,12 @@ var _ = Describe("FeedGroup Controller", func() {
 			afterFirstReconcile := &rss2discordv1alpha1.FeedGroup{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: namespace}, afterFirstReconcile)).To(Succeed())
 			feedStatusFor(afterFirstReconcile, rssServer.URL()).BackoffUntil = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+			// Make the feed otherwise due, so only the backoff can be what skips it.
+			feedStatusFor(afterFirstReconcile, rssServer.URL()).LastChecked = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 			Expect(k8sClient.Status().Update(ctx, afterFirstReconcile)).To(Succeed())
 
 			By("Running reconciliation")
-			_, err = reconcileFeedGroup(ctx, reconciler, feedGroupName)
+			_, err = reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying the backed-off feed was not fetched again")
@@ -2087,5 +2153,61 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
 			Expect(reconciler.Recorder).NotTo(BeNil())
 		})
+	})
+})
+
+// failingClient wraps a real client to inject API errors on specific calls,
+// for the reconcile error paths envtest can't produce on demand.
+type failingClient struct {
+	client.Client
+	getFeedGroupErr error
+	statusApplyErr  error
+}
+
+func (c *failingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*rss2discordv1alpha1.FeedGroup); ok && c.getFeedGroupErr != nil {
+		return c.getFeedGroupErr
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func (c *failingClient) Status() client.SubResourceWriter {
+	return &failingStatusWriter{SubResourceWriter: c.Client.Status(), applyErr: c.statusApplyErr}
+}
+
+type failingStatusWriter struct {
+	client.SubResourceWriter
+	applyErr error
+}
+
+func (w *failingStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	if w.applyErr != nil {
+		return w.applyErr
+	}
+	return w.SubResourceWriter.Apply(ctx, obj, opts...)
+}
+
+var _ = Describe("Reconcile API error paths", func() {
+	It("should return a non-NotFound error from fetching the FeedGroup, so it is retried with backoff", func() {
+		boom := errors.New("apiserver unavailable")
+		r := &FeedGroupReconciler{Client: &failingClient{Client: k8sClient, getFeedGroupErr: boom}, Scheme: k8sClient.Scheme()}
+
+		res, err := reconcileFeedGroupNow(ctx, r, "does-not-matter")
+
+		Expect(err).To(MatchError(boom))
+		Expect(res).To(Equal(reconcile.Result{}))
+	})
+
+	It("should surface a failed status write instead of reporting a successful reconcile", func() {
+		const feedGroupName = "test-feedgroup-status-apply-error"
+		_, _, reconciler := setUpFeedGroup(ctx, feedGroupName, "discord-webhook-apply-error", createRSSFeed(
+			testEntry{title: "Apply Error", link: "https://example.com/apply-error", guid: "apply-error", pubDate: time.Now().Format(time.RFC1123Z)},
+		))
+		boom := errors.New("status apply rejected")
+		reconciler.Client = &failingClient{Client: k8sClient, statusApplyErr: boom}
+
+		_, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
+
+		Expect(err).To(MatchError(boom))
 	})
 })

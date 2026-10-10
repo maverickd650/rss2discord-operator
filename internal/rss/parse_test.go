@@ -482,6 +482,27 @@ func TestParseFeed_UnknownRootReturnsUnrecognizedFormatError(t *testing.T) {
 	if unrecognized.Root != "feedwrapper" {
 		t.Fatalf("expected Root %q, got %q", "feedwrapper", unrecognized.Root)
 	}
+	if got, want := err.Error(), "unrecognized feed format: root element <feedwrapper>"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+}
+
+// TestParseFeed_MalformedBodyAfterValidRoot asserts a document whose root
+// element is recognized but whose body isn't well-formed XML surfaces a decode
+// error for every supported format, instead of a partial or empty result.
+func TestParseFeed_MalformedBodyAfterValidRoot(t *testing.T) {
+	for name, doc := range map[string]string{
+		"rss":  `<rss><channel><item><title>x</item></channel></rss>`,
+		"atom": `<feed><entry><title>x</entry></feed>`,
+		"rdf":  `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><item><title>x</item></rdf:RDF>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			entries, err := parseFeed([]byte(doc))
+			if err == nil {
+				t.Fatalf("expected a decode error, got entries %v", entries)
+			}
+		})
+	}
 }
 
 func TestParseFeed_RDF(t *testing.T) {

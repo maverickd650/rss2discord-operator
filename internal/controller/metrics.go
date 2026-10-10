@@ -54,6 +54,9 @@ const (
 	outcomeSendError   = "send_error"
 	outcomeRenderError = "render_error"
 	outcomeRateLimited = "rate_limited"
+	// outcomeSkipped is an entry dropped after exhausting retries so it stops
+	// blocking the feed behind it (see skipEntry).
+	outcomeSkipped = "skipped"
 )
 
 // fetchErrorOutcome and sendErrorOutcome build the diversified outcome label

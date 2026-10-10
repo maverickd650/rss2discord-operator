@@ -336,6 +336,8 @@ Common issues:
 - `LastError: webhook - discord webhook URL is empty` — the secret or key in `discordWebhookSecretRef` is wrong.
 - FeedGroup not updating — check `interval` and the operator logs.
 - Messages formatted wrong — check template placeholders against `.Title`, `.Description`, `.Link`, `.Published`.
+- A feed that keeps returning a "permanent" error (e.g. HTTP 404/403) is retried with exponential backoff capped at 6h, so it recovers on its own once the source is back; editing the spec retries it immediately.
+- An entry that can't be rendered is skipped (Warning Event `EntrySkipped`, `skipped` metric outcome) once the group's `retries` are exhausted, so it doesn't block newer entries — but only if other entries in the feed do render. If the template fails for every entry, they are held until you fix it.
 
 ## References
 

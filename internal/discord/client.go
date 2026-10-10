@@ -231,6 +231,9 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	}
 
 	if c.rateLimiter != nil {
+		if err := c.rateLimiter.wait(ctx, c.webhookURL); err != nil {
+			return err
+		}
 		if remaining, cooling := c.rateLimiter.reserve(c.webhookURL); cooling {
 			return &RateLimitError{RetryAfter: remaining}
 		}
@@ -290,7 +293,32 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 		}
 	}
 
+	c.notePacing(resp.Header)
 	return nil
+}
+
+// maxPaceWait is the longest a send will sleep for a webhook's bucket to
+// refill. Discord's buckets reset within a couple of seconds; anything much
+// longer is better surfaced as a rate limit so the reconcile backs off.
+const maxPaceWait = 5 * time.Second
+
+// notePacing reads Discord's X-RateLimit-* headers from a successful response
+// and, if this send emptied the webhook's bucket, tells the shared limiter so
+// the next send waits for the reset instead of earning a 429.
+func (c *Client) notePacing(h http.Header) {
+	if c.rateLimiter == nil || strings.TrimSpace(h.Get("X-RateLimit-Remaining")) != "0" {
+		return
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(h.Get("X-RateLimit-Reset-After")), 64)
+	if err != nil || seconds <= 0 {
+		return
+	}
+	d := time.Duration(seconds * float64(time.Second))
+	if d > maxPaceWait {
+		c.rateLimiter.cooldown(c.webhookURL, d)
+		return
+	}
+	c.rateLimiter.pace(c.webhookURL, d)
 }
 
 // decodeErrorDetail extracts Discord's machine-readable error code/message

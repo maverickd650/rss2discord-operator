@@ -256,9 +256,10 @@ type FeedStatus struct {
 	LastChecked string `json:"lastChecked,omitempty"`
 
 	// lastSeenEntry is the last seen entry identifier (GUID or Link) for
-	// this feed. Used to fetch only new entries after restarts.
+	// this feed. Used to fetch only new entries after restarts. Identifiers
+	// longer than the field limit are stored as "sha256:<hex digest>".
 	// +optional
-	// +kubebuilder:validation:MaxLength=32768
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:MinLength=1
 	LastSeenEntry string `json:"lastSeenEntry,omitempty"`
 
@@ -271,9 +272,9 @@ type FeedStatus struct {
 	// lastError is the last error message encountered for this feed, from
 	// whichever of fetch/render/send most recently failed. See Conditions
 	// for a structured, machine-readable breakdown of which stage failed
-	// and why.
+	// and why. Truncated to fit the field limit.
 	// +optional
-	// +kubebuilder:validation:MaxLength=32768
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:MinLength=1
 	LastError string `json:"lastError,omitempty"`
 
@@ -299,8 +300,9 @@ type FeedStatus struct {
 
 	// backoffUntil is an RFC3339 timestamp before which this feed should not
 	// be fetched again. Set on permanent fetch failures (e.g. HTTP 404) using
-	// exponential backoff starting from Spec.RetryInterval; cleared on the
-	// next successful fetch or when the FeedGroup spec changes. An empty
+	// exponential backoff starting from Spec.RetryInterval, capped at 6h
+	// (the feed keeps being retried at that cadence); cleared on the next
+	// successful fetch or when the FeedGroup spec changes. An empty
 	// string means the feed is not in backoff.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
