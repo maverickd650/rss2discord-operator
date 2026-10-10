@@ -134,6 +134,11 @@ func clampText(s string, max int) string {
 	return s[:cut] + ellipsis
 }
 
+// errText is err's message bounded for storage in FeedStatus.LastError.
+func errText(err error) string {
+	return clampText(err.Error(), maxStatusTextBytes)
+}
+
 // clampWatermark returns id unchanged when it fits in FeedStatus.LastSeenEntry,
 // otherwise a stable digest of it. Applied on both the store and compare
 // sides, so a long identity still matches itself across reconciles.
@@ -360,7 +365,7 @@ func (r *FeedGroupReconciler) processFeed(
 		// LastChecked rather than looking freshly checked every retry.
 		log.Error(fetchErr, "failed to fetch RSS feed", "url", feed.RSSUrl)
 		class := classifyFetchError(fetchErr)
-		fs.LastError = clampText(fetchErr.Error(), maxStatusTextBytes)
+		fs.LastError = errText(fetchErr)
 		fs.RetryCount++
 		feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, fetchErrorOutcome(class)).Inc()
 		setFeedCondition(fs, v1alpha1.FeedConditionTypeReachable, metav1.ConditionFalse,
@@ -573,7 +578,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 		discordMessage, err := buildDiscordMessage(feedGroup, embedSpec, contentTmpl, descriptionTmpl, threadNameTmpl, &feed, entry)
 		if err != nil {
 			log.Error(err, "failed to render Discord message", "url", feed.RSSUrl)
-			fs.LastError = clampText(err.Error(), maxStatusTextBytes)
+			fs.LastError = errText(err)
 			fs.RetryCount++
 			feedOperationsTotal.WithLabelValues(feedGroup.Namespace, feedGroup.Name, feed.RSSUrl, outcomeRenderError).Inc()
 			setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
@@ -628,7 +633,7 @@ func (r *FeedGroupReconciler) sendNewEntries(
 			Observe(time.Since(sendStart).Seconds())
 		if err != nil {
 			log.Error(err, "failed to send Discord message", "url", feed.RSSUrl)
-			fs.LastError = clampText(err.Error(), maxStatusTextBytes)
+			fs.LastError = errText(err)
 
 			if rateLimitErr, ok := errors.AsType[*discord.RateLimitError](err); ok {
 				wantRetry = true
@@ -803,7 +808,7 @@ func (r *FeedGroupReconciler) recordPersistentFailure(feedGroup *v1alpha1.FeedGr
 // ConfigError (or its message changes, e.g. a different typo), not on every
 // subsequent reconcile of the same unresolved error.
 func (r *FeedGroupReconciler) recordConfigError(feedGroup *v1alpha1.FeedGroup, fs *v1alpha1.FeedStatus, url string, err error) {
-	fs.LastError = clampText(err.Error(), maxStatusTextBytes)
+	fs.LastError = errText(err)
 	changed := setFeedCondition(fs, v1alpha1.FeedConditionTypeDelivered, metav1.ConditionFalse,
 		reasonConfigError, err.Error(), feedGroup.Generation)
 	if changed && r.Recorder != nil {

@@ -508,13 +508,6 @@ func TestClearPermanentBackoffs(t *testing.T) {
 	}
 }
 
-// failingTemplateFeed returns a feed whose message template parses but fails
-// at execution time ({{.Title.Nope}} indexes into a string), i.e. a
-// deterministic per-entry render error.
-func failingTemplateFeed(ns, name string) (*v1alpha1.FeedGroup, v1alpha1.FeedSpec) {
-	return newMetricsFeedGroup(ns, name, "{{.Title.Nope}}")
-}
-
 // TestProcessFeed_RenderErrorSkipsEntryAfterRetriesExhausted asserts that an
 // entry that deterministically fails to render blocks its feed only while
 // retries last: once RetryCount has passed the limit it is skipped (recorded
@@ -529,12 +522,9 @@ func TestProcessFeed_RenderErrorSkipsEntryAfterRetriesExhausted(t *testing.T) {
 	defer discordServer.Close()
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
-	fg, feed := failingTemplateFeed(ns, name)
-	// Only the first entry uses the broken template path; a per-feed format
-	// applies to all entries, so make the second one render by guarding on
-	// Title: {{if eq .Title "bad"}}{{.Title.Nope}}{{else}}ok{{end}}.
-	feed.Format = `{{if eq .Title "bad"}}{{.Title.Nope}}{{else}}ok {{.Title}}{{end}}`
-	fg.Spec.Feeds[0] = feed
+	// {{.Title.Nope}} fails at execution time (it indexes into a string); the
+	// guard makes only the "bad" entry hit it, so the other one renders.
+	fg, feed := newMetricsFeedGroup(ns, name, `{{if eq .Title "bad"}}{{.Title.Nope}}{{else}}ok {{.Title}}{{end}}`)
 	fg.Spec.Retries = 2
 	fetch := rss.FetchResult{Entries: []rss.Entry{
 		{ID: "https://example.com/bad", Title: "bad", Seq: 1},
@@ -591,7 +581,7 @@ func TestProcessFeed_BrokenTemplateNeverSkipsEntries(t *testing.T) {
 	defer discordServer.Close()
 	client := discordServer.DiscordClientBuilder()(discordServer.URL())
 
-	fg, feed := failingTemplateFeed(ns, name)
+	fg, feed := newMetricsFeedGroup(ns, name, "{{.Title.Nope}}") // fails for every entry
 	fg.Spec.Retries = 1
 	fetch := rss.FetchResult{Entries: []rss.Entry{
 		{ID: "https://example.com/entry-a", Title: "a", Seq: 1},
@@ -651,23 +641,9 @@ func TestEnsureFeedStatuses_NormalizesOversizedStoredValues(t *testing.T) {
 	if !entriesContainID([]rss.Entry{{ID: longID}}, fs.LastSeenEntry) {
 		t.Error("normalized watermark no longer matches the entry it was derived from")
 	}
-}
-
-// TestLongIdentityWatermarkMatchesAcrossReconciles asserts an entry identity
-// too long for LastSeenEntry is stored as a digest that still matches the same
-// entry next reconcile (so it neither blocks the schema nor re-sends).
-func TestLongIdentityWatermarkMatchesAcrossReconciles(t *testing.T) {
-	longID := "https://example.com/" + strings.Repeat("a", 3000)
-	stored := clampWatermark(entryIdentity(rss.Entry{ID: longID}))
-	if len(stored) > maxStatusTextBytes {
-		t.Fatalf("stored watermark is %d bytes, over the limit", len(stored))
-	}
-	if !entriesContainID([]rss.Entry{{ID: longID}}, stored) {
-		t.Error("long identity should still be found by its stored watermark")
-	}
-	// A value stored raw by an older version normalizes to the same digest.
-	if got := clampWatermark(longID); got != stored {
-		t.Error("legacy raw watermark should normalize to the same digest")
+	// A watermark freshly stored for the same entry is the same value.
+	if fresh := clampWatermark(entryIdentity(rss.Entry{ID: longID})); fresh != fs.LastSeenEntry {
+		t.Errorf("fresh watermark %q != normalized legacy watermark %q", fresh, fs.LastSeenEntry)
 	}
 }
 

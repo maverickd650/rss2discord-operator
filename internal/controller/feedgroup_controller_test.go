@@ -365,7 +365,7 @@ func setUpFeedGroup(ctx context.Context, name, secretName, feedXML string, opts 
 // feeds checked "just now" are otherwise skipped as not yet due (see
 // feedDue). Use reconcileFeedGroupNow to exercise that gate itself.
 func reconcileFeedGroup(ctx context.Context, r *FeedGroupReconciler, name string) (reconcile.Result, error) {
-	ageFeedChecks(ctx, name)
+	backdateFeedChecks(ctx, name, time.Hour)
 	return reconcileFeedGroupNow(ctx, r, name)
 }
 
@@ -376,9 +376,9 @@ func reconcileFeedGroupNow(ctx context.Context, r *FeedGroupReconciler, name str
 	})
 }
 
-// ageFeedChecks backdates every feed's LastChecked by an hour, so the next
-// reconcile treats the feed as due for its next poll.
-func ageFeedChecks(ctx context.Context, name string) {
+// backdateFeedChecks sets every checked feed's LastChecked to ago in the past,
+// e.g. an hour to make the next reconcile treat the feed as due.
+func backdateFeedChecks(ctx context.Context, name string, ago time.Duration) {
 	GinkgoHelper()
 	var fg rss2discordv1alpha1.FeedGroup
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, &fg); err != nil {
@@ -387,7 +387,7 @@ func ageFeedChecks(ctx context.Context, name string) {
 	changed := false
 	for i := range fg.Status.Feeds {
 		if fg.Status.Feeds[i].LastChecked != "" {
-			fg.Status.Feeds[i].LastChecked = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			fg.Status.Feeds[i].LastChecked = time.Now().Add(-ago).UTC().Format(time.RFC3339)
 			changed = true
 		}
 	}
@@ -562,10 +562,7 @@ var _ = Describe("FeedGroup Controller", func() {
 			Expect(discordServer.MessageCount()).To(Equal(1))
 
 			By("Reconciling part-way through the interval, which must requeue for the remaining time, not a full interval")
-			var fg rss2discordv1alpha1.FeedGroup
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: feedGroupName, Namespace: testNamespace}, &fg)).To(Succeed())
-			feedStatusFor(&fg, rssServer.URL()).LastChecked = time.Now().Add(-20 * time.Minute).UTC().Format(time.RFC3339)
-			Expect(k8sClient.Status().Update(ctx, &fg)).To(Succeed())
+			backdateFeedChecks(ctx, feedGroupName, 20*time.Minute)
 			res, err := reconcileFeedGroupNow(ctx, reconciler, feedGroupName)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.RequeueAfter).To(BeNumerically("~", 10*time.Minute, 10*time.Second))

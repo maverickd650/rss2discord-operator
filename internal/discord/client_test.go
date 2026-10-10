@@ -428,21 +428,30 @@ func TestSendMessage_RespectsTimeout(t *testing.T) {
 	}
 }
 
-// TestSendMessage_PacesWhenBucketEmpty asserts that a success response
-// reporting an empty bucket (X-RateLimit-Remaining: 0) makes the next send
-// through the same limiter wait for Reset-After rather than hit the server
-// early and get 429'd -- and that it does so without returning an error.
-func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
+// newBucketServer starts a TLS webhook server that answers 204 with the given
+// rate-limit headers, allows its host for the test's duration, and returns the
+// arrival time of each request it has served.
+func newBucketServer(t *testing.T, remaining, resetAfter string) (*httptest.Server, *[]time.Time) {
+	t.Helper()
 	var arrivals []time.Time
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		arrivals = append(arrivals, time.Now())
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset-After", "0.2")
+		w.Header().Set("X-RateLimit-Remaining", remaining)
+		w.Header().Set("X-RateLimit-Reset-After", resetAfter)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(srv.Close)
 	AllowedWebhookHosts["127.0.0.1"] = true
 	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+	return srv, &arrivals
+}
+
+// TestSendMessage_PacesWhenBucketEmpty asserts that a success response
+// reporting an empty bucket (X-RateLimit-Remaining: 0) makes the next send
+// through the same limiter wait for Reset-After rather than hit the server
+// early and get 429'd -- and that it does so without returning an error.
+func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
+	srv, arrivals := newBucketServer(t, "0", "0.2")
 
 	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
 	for _, text := range []string{"one", "two"} {
@@ -450,10 +459,10 @@ func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
 			t.Fatalf("send %q: %v", text, err)
 		}
 	}
-	if len(arrivals) != 2 {
-		t.Fatalf("expected 2 requests, got %d", len(arrivals))
+	if len(*arrivals) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(*arrivals))
 	}
-	if gap := arrivals[1].Sub(arrivals[0]); gap < 150*time.Millisecond {
+	if gap := (*arrivals)[1].Sub((*arrivals)[0]); gap < 150*time.Millisecond {
 		t.Fatalf("second send arrived %v after the first, want it paced to ~200ms", gap)
 	}
 }
@@ -461,16 +470,7 @@ func TestSendMessage_PacesWhenBucketEmpty(t *testing.T) {
 // TestSendMessage_LongResetBecomesCooldown asserts a bucket that won't refill
 // within maxPaceWait is surfaced as a RateLimitError instead of blocking.
 func TestSendMessage_LongResetBecomesCooldown(t *testing.T) {
-	var requests int
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset-After", "30")
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(srv.Close)
-	AllowedWebhookHosts["127.0.0.1"] = true
-	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+	srv, arrivals := newBucketServer(t, "0", "30")
 
 	c := NewClientWithLimiter(srv.URL, srv.Client(), NewRateLimiter())
 	if err := c.SendMessageText(t.Context(), "one"); err != nil {
@@ -479,8 +479,8 @@ func TestSendMessage_LongResetBecomesCooldown(t *testing.T) {
 	if _, ok := errors.AsType[*RateLimitError](c.SendMessageText(t.Context(), "two")); !ok {
 		t.Fatal("expected *RateLimitError for a reset beyond maxPaceWait")
 	}
-	if requests != 1 {
-		t.Fatalf("expected the second send to be short-circuited, got %d requests", requests)
+	if len(*arrivals) != 1 {
+		t.Fatalf("expected the second send to be short-circuited, got %d requests", len(*arrivals))
 	}
 }
 
@@ -545,13 +545,7 @@ func TestNotePacing_NilLimiterIsNoop(t *testing.T) {
 // pacing delay returns the context's error promptly and never reaches the
 // server.
 func TestSendMessage_ContextCanceledWhilePaced(t *testing.T) {
-	var requests int
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests++
-	}))
-	t.Cleanup(srv.Close)
-	AllowedWebhookHosts["127.0.0.1"] = true
-	t.Cleanup(func() { delete(AllowedWebhookHosts, "127.0.0.1") })
+	srv, arrivals := newBucketServer(t, "5", "1")
 
 	limiter := NewRateLimiter()
 	limiter.pace(srv.URL, maxPaceWait)
@@ -567,8 +561,8 @@ func TestSendMessage_ContextCanceledWhilePaced(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("returned after %v, want it to give up when the context ended", elapsed)
 	}
-	if requests != 0 {
-		t.Errorf("server saw %d requests, want none", requests)
+	if len(*arrivals) != 0 {
+		t.Errorf("server saw %d requests, want none", len(*arrivals))
 	}
 }
 

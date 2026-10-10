@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"maps"
 	"sync"
 	"time"
 )
@@ -59,11 +60,7 @@ func (l *RateLimiter) reserve(webhookURL string) (remaining time.Duration, cooli
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	for k, until := range l.cooldowns {
-		if !until.After(now) {
-			delete(l.cooldowns, k)
-		}
-	}
+	pruneExpired(l.cooldowns, now)
 
 	if until, ok := l.cooldowns[key]; ok {
 		if remaining := until.Sub(now); remaining > 0 {
@@ -71,6 +68,11 @@ func (l *RateLimiter) reserve(webhookURL string) (remaining time.Duration, cooli
 		}
 	}
 	return 0, false
+}
+
+// pruneExpired drops every entry in m whose deadline has passed.
+func pruneExpired(m map[string]time.Time, now time.Time) {
+	maps.DeleteFunc(m, func(_ string, until time.Time) bool { return !until.After(now) })
 }
 
 // cooldown records that webhookURL must not be sent to again until
@@ -104,11 +106,7 @@ func (l *RateLimiter) paceDelay(webhookURL string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	for k, until := range l.pacing {
-		if !until.After(now) {
-			delete(l.pacing, k)
-		}
-	}
+	pruneExpired(l.pacing, now)
 	return l.pacing[key].Sub(now)
 }
 

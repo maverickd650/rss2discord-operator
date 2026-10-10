@@ -19,8 +19,6 @@ package controller
 import (
 	"strings"
 	"testing"
-
-	"github.com/maverickd650/rss2discord-operator/internal/rss"
 )
 
 // Entry identity runs several times per entry on every reconcile whose feed
@@ -40,14 +38,6 @@ func BenchmarkNormalizeIdentity(b *testing.B) {
 				normalizeIdentity(id)
 			}
 		})
-	}
-}
-
-func BenchmarkComputeEntryKey(b *testing.B) {
-	entry := rss.Entry{ID: "https://example.com/post/1?utm_source=feed"}
-	b.ReportAllocs()
-	for b.Loop() {
-		computeEntryKey(entry)
 	}
 }
 
