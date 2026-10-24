@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/maverickd650/rss2discord-operator/compare/v0.13.1...v0.13.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **container:** update image gcr.io/distroless/static (d620678 → 18f4cc2) ([#282](https://github.com/maverickd650/rss2discord-operator/issues/282)) ([bfe2944](https://github.com/maverickd650/rss2discord-operator/commit/bfe29443b1ccd16e03763367546ef11f0bd8e1a5))
+
 ## [0.13.1](https://github.com/maverickd650/rss2discord-operator/compare/v0.13.0...v0.13.1) (2026-10-23)
 
 
