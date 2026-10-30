@@ -168,9 +168,11 @@ func (s *feedSync) withoutEntries() (syncVerdict, bool) {
 // migrations, builds the ledger over the whole fetch, plans the delivery
 // (catch-up limit included) and, for a first sync with catchUpLimit 0, skips the
 // backlog. It must be called at most once, and only after the feed's
-// configuration is known to be usable: a configuration error must leave fs as it
-// was (see syncConfigError), so that fixing it replays the same first sync
-// instead of delivering the whole backlog.
+// configuration is known to be usable: a configuration error must leave fs's
+// delivery state (watermark, LastSent, Initialized, validators) as it was (see
+// syncConfigError), so that fixing it replays the same first sync instead of
+// delivering the whole backlog. The fetch-succeeded outcome recorded before the
+// check (LastChecked, Reachable) and the config error itself still apply.
 func (s *feedSync) begin() {
 	if s.began {
 		panic("feedSync: begin called twice")
