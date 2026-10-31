@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.14.0...v0.15.0) (2026-10-31)
+
+
+### Features
+
+* **controller:** back off permanent send failures immediately and retry them when the webhook Secret changes ([#316](https://github.com/maverickd650/rss2discord-operator/issues/316)) ([283eb4d](https://github.com/maverickd650/rss2discord-operator/commit/283eb4d4f497d213437ddc62d17a970c06e6f3db))
+
+
+### Bug Fixes
+
+* **controller:** keep fetch and delivery failures in separate retry runs; don't skip on filtered-entry evidence ([#337](https://github.com/maverickd650/rss2discord-operator/issues/337)) ([b129d55](https://github.com/maverickd650/rss2discord-operator/commit/b129d557dea394600b9096681d3495ca4a5fa084))
+* **controller:** never record a stripped LastSent key a sibling shares during identity migrations ([#330](https://github.com/maverickd650/rss2discord-operator/issues/330)) ([a018bb9](https://github.com/maverickd650/rss2discord-operator/commit/a018bb943679309a078ece139a4a0c4f87f26040))
+* **rss:** typed fetch errors; oversized bodies and invalid URLs back off as permanent ([#327](https://github.com/maverickd650/rss2discord-operator/issues/327)) ([cac0105](https://github.com/maverickd650/rss2discord-operator/commit/cac01056dd13f74f70fd9e44fc4898e25c44f313))
+
 ## [0.14.0](https://github.com/maverickd650/rss2discord-operator/compare/v0.13.1...v0.14.0) (2026-10-29)
 
 
